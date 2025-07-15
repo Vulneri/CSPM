@@ -97,7 +97,7 @@ security@vulneri.io
 ---
 
 ## As saidas do script são as seguintes:
-## 1 - Configurar perfil AWSCLI - 
+## 1 - Configurar perfil AWSCLI
  **/usr/local/bin/aws configure sso --profile Vulneri**
 
  SSO session name (Recommended): Vulneri- SSO start URL [None]: https://d-9XXXXX6XX.awsapps.com/start
@@ -117,14 +117,16 @@ security@vulneri.io
 
 ## 2 - Testar 
  **aws sts get-caller-identity --profile Vulneri**
+ 
  {
     "UserId": "XXXXXXXXXXXXXXXXXXXXXX:email@vulneri.io",
     "Account": "3XXXXXXX6542",
     "Arn": "arn:aws:sts::3XXXXXXX6542:assumed-role/AWSReservedSSO_AdministratorAccess_234456678234fer7/email@vulneri.io"
   }
 
-## 3 - Fazer login AWSCLI - 
+## 3 - Fazer login AWSCLI
  **/usr/local/bin/aws sso login --profile Vulneri**
+ 
  Attempting to automatically open the SSO authorization page in your default browser.
  If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
 
@@ -134,8 +136,9 @@ security@vulneri.io
 
 
 
-## 4 - Rodar o script para criar usuario e atribuir as permissoes - 
+## 4 - Rodar o script para criar usuario e atribuir as permissoes
  **bash criar-usuario-vulneri.sh**
+ 
  [INFO] Iniciando criacao de usuario IAM com perfil 'Vulneri'...
  [INFO] Instalando dependencias: curl, unzip, jq, python3...
  [INFO] Verificando existencia do perfil 'Vulneri' no ~/.aws/config...
