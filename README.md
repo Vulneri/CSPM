@@ -140,11 +140,18 @@ security@vulneri.io
  **bash criar-usuario-vulneri.sh**
  
  [INFO] Iniciando criacao de usuario IAM com perfil 'Vulneri'...
+
  [INFO] Instalando dependencias: curl, unzip, jq, python3...
+
  [INFO] Verificando existencia do perfil 'Vulneri' no ~/.aws/config...
+
+
  [INFO] Verificando autenticacao com perfil 'Vulneri'...
+
  [INFO] Autenticacao bem-sucedida.
+
  [INFO] Criando usuario IAM 'ReadOnly-Key-To-Vulneri'...
+
  {
     "User": {
         "Path": "/",
@@ -154,14 +161,23 @@ security@vulneri.io
         "CreateDate": "2025-07-15T18:36:01+00:00"
     }
  }
+
  [INFO] Usuario criado com sucesso.
+
  [INFO] Verificando numero de access keys...
+
  [INFO] Criando nova access key...
+
  [INFO] Access key salva no arquivo: ReadOnly-Key-To-Vulneri_accessKeys.csv
+
  [INFO] Anexando politica 'ReadOnlyAccess' ao usuario 'ReadOnly-Key-To-Vulneri'...
+
  [INFO] Anexando politica 'SecurityAudit' ao usuario 'ReadOnly-Key-To-Vulneri'...
+
  [INFO] Todas as politicas foram atribuidas com sucesso.
+
  [INFO] Script finalizado com sucesso.
+
  Envie o arquivo ReadOnly-Key-To-Vulneri_accessKeys.csv para security@vulneri.io
 
 
