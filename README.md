@@ -99,6 +99,7 @@ security@vulneri.io
 ## As saidas do script são as seguintes:
 ## 1 - Configurar perfil AWSCLI - 
  **/usr/local/bin/aws configure sso --profile Vulneri**
+
  SSO session name (Recommended): Vulneri- SSO start URL [None]: https://d-9XXXXX6XX.awsapps.com/start
  SSO region [None]: us-east-1
  SSO registration scopes [sso:account:access]: sso:account:access
