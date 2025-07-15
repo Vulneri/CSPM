@@ -97,42 +97,41 @@ security@vulneri.io
 ---
 
 ##As saidas do script são as seguintes:
-# 1 - Configurar perfil AWSCLI - /usr/local/bin/aws configure sso --profile Vulneri
-# SSO session name (Recommended): Vulneri
-# SSO start URL [None]: https://d-9XXXXX6XX.awsapps.com/start
-# SSO region [None]: us-east-1
-# SSO registration scopes [sso:account:access]: sso:account:access
-# Attempting to automatically open the SSO authorization page in your default browser.
-# If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
+## 1 - Configurar perfil AWSCLI - /usr/local/bin/aws configure sso --profile Vulneri
+- SSO session name (Recommended): Vulneri- SSO start URL [None]: https://d-9XXXXX6XX.awsapps.com/start
+- SSO region [None]: us-east-1
+- SSO registration scopes [sso:account:access]: sso:account:access
+- Attempting to automatically open the SSO authorization page in your default browser.
+- If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
  
-# https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
-# Gtk-Message: 15:31:14.239: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
-# Using the account ID 3XXXXXXX6542
-# The only role available to you is: AdministratorAccess
-# Using the role name "AdministratorAccess"
-# Default client Region [None]:
-# CLI default output format (json if not specified) [None]:
-# To use this profile, specify the profile name using --profile, as shown:
+- https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
+- Gtk-Message: 15:31:14.239: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
+- Using the account ID 3XXXXXXX6542
+- The only role available to you is: AdministratorAccess
+- Using the role name "AdministratorAccess"
+- Default client Region [None]:
+- CLI default output format (json if not specified) [None]:
+- To use this profile, specify the profile name using --profile, as shown:
 
-# 2 - Testar - aws sts get-caller-identity --profile Vulneri
-# aws sts get-caller-identity --profile Vulneri
-# {
-#    "UserId": "XXXXXXXXXXXXXXXXXXXXXX:email@vulneri.io",
-#    "Account": "3XXXXXXX6542",
-#    "Arn": "arn:aws:sts::3XXXXXXX6542:assumed-role/AWSReservedSSO_AdministratorAccess_234456678234fer7/email@vulneri.io"
-# }
+## 2 - Testar - aws sts get-caller-identity --profile Vulneri
+- aws sts get-caller-identity --profile Vulneri
+- {
+-    "UserId": "XXXXXXXXXXXXXXXXXXXXXX:email@vulneri.io",
+-    "Account": "3XXXXXXX6542",
+-    "Arn": "arn:aws:sts::3XXXXXXX6542:assumed-role/AWSReservedSSO_AdministratorAccess_234456678234fer7/email@vulneri.io"
+-  }
 
-# 3 - Fazer login AWSCLI - /usr/local/bin/aws sso login --profile Vulneri
-# Attempting to automatically open the SSO authorization page in your default browser.
-# If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
+## 3 - Fazer login AWSCLI - /usr/local/bin/aws sso login --profile Vulneri
+- Attempting to automatically open the SSO authorization page in your default browser.
+- If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
 
-# https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
-# Gtk-Message: 15:32:16.824: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
-# Successfully logged into Start URL: https://d-9XXXXX6XX.awsapps.com/start
+- https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
+- Gtk-Message: 15:32:16.824: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
+- Successfully logged into Start URL: https://d-9XXXXX6XX.awsapps.com/start
 
 
 
-# 4 - Rodar o script para criar usuario e atribuir as permissoes - bash criar-usuario-vulneri.sh
+## 4 - Rodar o script para criar usuario e atribuir as permissoes - bash criar-usuario-vulneri.sh
 # [INFO] Iniciando criacao de usuario IAM com perfil 'Vulneri'...
 # [INFO] Instalando dependencias: curl, unzip, jq, python3...
 # [INFO] Verificando existencia do perfil 'Vulneri' no ~/.aws/config...
