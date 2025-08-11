@@ -5,24 +5,6 @@ Este repositório contém scripts de integração com os principais provedores d
 - Cloud Security Posture Management (CSPM)
 - FinOps (gestão de custos em nuvem)
 
-## Estrutura do Repositório
-
-Os scripts estão organizados por provedor na pasta `/SCRIPTS`, conforme abaixo:
-
-SCRIPTS/
-├── AWS/
-│ ├── cspm_aws.sh
-│ └── README.md
-├── AZURE/
-│ ├── cspm_azure.sh
-│ ├── cspm_azure.ps1
-│ └── README.md
-├── M365/
-│ ├── cspm_m365.sh
-│ ├── cspm_m365.ps1
-│ └── README.md
-
-Cada diretório contém os scripts e instruções específicas de uso para o ambiente correspondente.
 
 ## Finalidade
 
