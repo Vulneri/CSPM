@@ -1,69 +1,56 @@
 #!/usr/bin/env pwsh
 
-# -----------------------------------------------------------
-# Script: access_azure.ps1
-# Objetivo: Automatiza o registro de uma aplicação no Azure AD,
-# gera client secret, atribui permissões no Microsoft Graph
-# e concede permissão de Reader na subscription.
-# -----------------------------------------------------------
-#
-# OUTPUT
-# PS C:\Users\user> Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-# PS C:\Users\user> .\access_azure.ps1
-# [INFO] Azure CLI encontrado.
-# [INFO] Autenticando no Azure CLI...
-# WARNING: Select the account you want to log in with. For more information on login with Azure CLI, see https://go.microsoft.com/fwlink/?linkid=2271136
-# [INFO] Tenant autenticado: 7i74yfgf-7493-7294-8372-93ukdo7rhrf48
-# [INFO] Subscription ativa: Pago pelo Uso (ugfikei3-3423-4242-bf94-84jfkdh6349)
-# [INFO] Registrando aplicacao '3636'...
-# [INFO] Aplicacao registrada com App ID: 84ydn572-836h-8jd6-830d-8305629jud73
-# [INFO] Criando client secret...
-# WARNING: The output includes credentials that you must protect. Be sure that you do not include these credentials in your code or check the credentials into your source control. For more information, see https://aka.ms/azadsp-cli
-# [INFO] Client secret criado.
-# [INFO] Criando service principal para a aplicacao...
-# [INFO] Atribuindo role 'Reader' na subscription '4b4236db-8121-4695-bf57-41a852941748'...
-# [INFO] Permissao atribuida.
-# [INFO] Exportando credenciais para C:\Users\ldeso\Downloads/vulneri_powershell_XX_azure_credentials.csv...
-# [INFO] Conteudo do CSV:
-# client_id,client_secret,tenant_id,subscription_id
-# 284ydn572-836h-8jd6-830d-8305629jud73,X8D7W~fKdJQtyiDNfJwg_uLhuWZItqctul8D4afo,7i74yfgf-7493-7294-8372-93ukdo7rhrf48,ugfikei3-3423-4242-bf94-84jfkdh6349
-#
-#
-###################################################################
-
-
 # Permitir execução temporária de scripts nesta sessão
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 # ----- CONFIGURACAO INICIAL -----
 $ErrorActionPreference = "Stop"
 
-$AppName       = "vulneri_pshell_cspm_25"
-$CsvPath       = "$PWD/${AppName}_azure_credentials.csv"
+$AppName       = "vulneri_azure_cspm_25"
+$EnvFile       = "vulneri_cspm_azure_env.txt"
 $GraphApiId    = "00000003-0000-0000-c000-000000000000"
 $GraphPermissions = @( 
     "7ab1d382-f21e-4acd-a863-ba3e13f7da61",  # Directory.Read.All
     "5d6b6bb7-de71-4623-b4af-96380a352509",  # Policy.Read.All
-    "df021288-bdef-4463-88db-98f22de89214"   # UserAuthenticationMethod.Read.All
+    "df021288-bdef-4463-88db-98f22de89214",  # UserAuthenticationMethod.Read.All (Legacy/Extra)
+    "012133ce-4467-4f61-b44d-585ee912e95a",  # Reports.Read.All
+    "350df2c0-82a9-4621-9311-53b019199d25",  # SecurityEvents.Read.All
+    "b8964574-aaa4-4efd-ad07-062e078ea873"   # Billing.Read.All
 )
-$AzureRole     = "Reader"
+$AzureRoles     = @("Reader", "Security Reader", "Cost Management Reader", "Billing Reader")
 
-# Instalar Azure CLI automaticamente, se não estiver presente
-if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
-    Write-Host "[INFO] Azure CLI não encontrado. Iniciando instalação..."
-    $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile .\AzureCLI.msi
-    Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'
-    Remove-Item .\AzureCLI.msi
-    Write-Host "[INFO] Azure CLI instalado. Reinicie o PowerShell e execute novamente o script."
-    exit 0
+function Test-Admin {
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Install-AzCli {
+    $isWin = ($env:OS -match "Windows") -or ($IsWindows)
+    if ($isWin) {
+        Write-Host "[INFO] Azure CLI nao detectada. Tentando instalar via Winget..." -ForegroundColor Yellow
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget install -e --id Microsoft.AzureCLI --accept-source-agreements --accept-package-agreements
+            Write-Host "[OK] Instalacao iniciada. Por favor, REINICIE o PowerShell apos o termino para que o comando 'az' seja reconhecido." -ForegroundColor Green
+            exit 0
+        } else {
+            # Fallback para download direto se winget falhar
+            Write-Host "[INFO] Winget nao disponivel. Baixando instalador MSI..."
+            $msiPath = "$env:TEMP\AzureCLI.msi"
+            Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile $msiPath
+            Start-Process msiexec.exe -Wait -ArgumentList "/I $msiPath /quiet"
+            Remove-Item $msiPath
+            Write-Host "[OK] Azure CLI instalado. Reinicie o PowerShell." -ForegroundColor Green
+            exit 0
+        }
+    } else {
+        Write-Error "Azure CLI nao encontrada. Por favor instale manualmente no seu sistema Linux."
+        exit 1
+    }
 }
 
 function Verificar-AzureCLI {
     if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
-        Write-Host "[ERRO] Azure CLI nao encontrado. Instale o Azure CLI antes de continuar."
-        Write-Host "[LINK] https://learn.microsoft.com/cli/azure/install-azure-cli"
-        exit 1
+        Install-AzCli
     } else {
         Write-Host "[INFO] Azure CLI encontrado."
     }
@@ -71,16 +58,21 @@ function Verificar-AzureCLI {
 
 function Autenticar-Azure {
     Write-Host "[INFO] Autenticando no Azure CLI..."
-    az login | Out-Null
-    $subs = az account list --query "[?isDefault].{name:name, id:id, tenantId:tenantId}" -o json | ConvertFrom-Json
-    if ($subs.Count -eq 0) {
+    try {
+        az account show > $null 2>&1
+    } catch {
+        az login --allow-no-subscriptions | Out-Null
+    }
+    
+    $script:SUBSCRIPTIONS = az account list --query "[].{name:name, id:id, tenantId:tenantId}" -o json | ConvertFrom-Json
+    if ($SUBSCRIPTIONS.Count -eq 0) {
         Write-Host "[ERRO] Nenhuma subscription encontrada."; exit 1
     }
-    $sub = $subs[0]
-    $script:SUBSCRIPTION_ID = $sub.id
-    $script:TENANT_ID = $sub.tenantId
-    Write-Host "[INFO] Tenant autenticado: $TENANT_ID"
-    Write-Host "[INFO] Subscription ativa: $($sub.name) ($SUBSCRIPTION_ID)"
+    
+    # Pega o TenantId da primeira sub como referencia
+    $script:TENANT_ID = $SUBSCRIPTIONS[0].tenantId
+    Write-Host "[OK] Tenant identificado: $TENANT_ID"
+    Write-Host "[OK] Total de assinaturas mapeadas: $($SUBSCRIPTIONS.Count)"
 }
 
 function Registrar-Aplicacao {
@@ -121,35 +113,81 @@ function Criar-ClientSecret {
     Write-Host "[INFO] Client secret criado."
 }
 
+function Atribuir-Permissoes-Graph {
+    Write-Host "[INFO] Aguardando consistencia do Azure (10s) antes do consentimento..."
+    Start-Sleep -Seconds 10
+    Write-Host "[INFO] Solicitando consentimento administrativo para Graph APIs..."
+    try {
+        az ad app permission admin-consent --id $APP_ID | Out-Null
+        Write-Host "[OK] Consentimento concedido via CLI." -ForegroundColor Green
+    } catch {
+        Write-Warning "Consentimento automatico falhou por politicas do tenant."
+        $portalUrl = "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
+        Write-Host "[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:" -ForegroundColor Yellow
+        Write-Host $portalUrl -ForegroundColor Cyan
+        
+        # Tenta abrir o browser automaticamente no Windows
+        try { Start-Process $portalUrl } catch {}
+    }
+}
+
 function Criar-ServicePrincipal {
     Write-Host "[INFO] Criando service principal para a aplicacao..."
     $sp = az ad sp create --id $APP_ID -o json | ConvertFrom-Json
     $script:SP_OBJECT_ID = $sp.id
 }
 
-function Atribuir-Permissao {
-    Write-Host "[INFO] Atribuindo role '$AzureRole' na subscription '$SUBSCRIPTION_ID'..."
-    az role assignment create `
-        --assignee-object-id $SP_OBJECT_ID `
-        --assignee-principal-type ServicePrincipal `
-        --role $AzureRole `
-        --scope "/subscriptions/$SUBSCRIPTION_ID" | Out-Null
-    Write-Host "[INFO] Permissao atribuida."
+function Atribuir-Permissoes-RBAC {
+    Write-Host "[INFO] Atribuindo papeis de seguranca e billing em TODAS as assinaturas..."
+    
+    foreach ($sub in $SUBSCRIPTIONS) {
+        Write-Host "  -> Processando assinatura: $($sub.name) ($($sub.id))" -ForegroundColor Cyan
+        foreach ($role in $AzureRoles) {
+            try {
+                az role assignment create `
+                    --assignee-object-id $SP_OBJECT_ID `
+                    --assignee-principal-type ServicePrincipal `
+                    --role $role `
+                    --scope "/subscriptions/$($sub.id)" | Out-Null
+                Write-Host "     [OK] Role '$role' atribuida." -ForegroundColor Green
+            } catch {
+                Write-Warning "     [AVISO] Falha ao atribuir '$role'. Verifique privilegios de Owner/User Access Administrator."
+            }
+        }
+    }
 }
 
 function Exportar-Credenciais {
-    Write-Host "[INFO] Exportando credenciais para $CsvPath..."
-    "client_id,client_secret,tenant_id,subscription_id" | Out-File -Encoding UTF8 $CsvPath
-    "$APP_ID,$CLIENT_SECRET,$TENANT_ID,$SUBSCRIPTION_ID" | Out-File -Append -Encoding UTF8 $CsvPath
-    Write-Host "[INFO] Conteudo do CSV:"
-    Get-Content $CsvPath
+    Write-Host "[INFO] Salvando variaveis de ambiente em '$EnvFile'..."
+    $content = @"
+export AZURE_CLIENT_ID='$APP_ID'
+export AZURE_CLIENT_SECRET='$CLIENT_SECRET'
+export AZURE_TENANT_ID='$TENANT_ID'
+"@
+    $content | Out-File -Encoding UTF8 $EnvFile
+    Write-Host ""
+    Write-Host "IMPORTANTE:"
+    Write-Host "O consentimento administrativo pode nao ter sido concedido automaticamente."
+    Write-Host "Caso necessario, conceda manualmente no portal do Entra ID:"
+    Write-Host "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    Write-Host "Localize o app, va em 'API Permissions' e clique em 'Grant admin consent'."
+    Write-Host ""
+    Write-Host "[OK] Configuracao concluida! Credenciais salvas em: $EnvFile" -ForegroundColor Green
 }
 
 # Execucao sequencial das funcoes
+Write-Host "=== Iniciando Azure CSPM/FinOps Setup Tools ==="
+
+$isWin = ($env:OS -match "Windows") -or ($IsWindows)
+if ($isWin -and -not (Test-Admin)) {
+    Write-Warning "!!! ATENCAO: Corra este script como ADMINISTRADOR para evitar erros de permissao local !!!"
+}
+
 Verificar-AzureCLI
 Autenticar-Azure
 Registrar-Aplicacao
 Criar-ClientSecret
+Atribuir-Permissoes-Graph
 Criar-ServicePrincipal
-Atribuir-Permissao
+Atribuir-Permissoes-RBAC
 Exportar-Credenciais
