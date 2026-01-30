@@ -172,18 +172,18 @@ O365_MGMT="ff74b927-94b6-45bc-9171-47fed879668d"
 GRAPH_PERMS=("AuditLog.Read.All" "Directory.Read.All" "Policy.Read.All" "SharePointTenantSettings.Read.All" "Organization.Read.All" "Domain.Read.All" "SecurityEvents.Read.All" "RoleManagement.Read.Directory" "Policy.Read.ConditionalAccess" "IdentityRiskEvent.Read.All" "Reports.Read.All" "Billing.Read.All" "SubscribedSkus.Read.All")
 for perm in "${GRAPH_PERMS[@]}"; do
     GUID=$(get_guid "$MS_GRAPH" "$perm")
-    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$MS_GRAPH" --api-permissions "$GUID=Role" > /dev/null
+    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$MS_GRAPH" --api-permissions "$GUID=Role" --only-show-errors > /dev/null
 done
 
 # Exchange
 GUID=$(get_guid "$EXCHANGE" "Exchange.ManageAsApp")
-[ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$EXCHANGE" --api-permissions "$GUID=Role" > /dev/null
+[ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$EXCHANGE" --api-permissions "$GUID=Role" --only-show-errors > /dev/null
 
 # O365 Management
 MGMT_PERMS=("ActivityFeed.Read" "ActivityFeed.ReadDlp" "ServiceHealth.Read")
 for perm in "${MGMT_PERMS[@]}"; do
     GUID=$(get_guid "$O365_MGMT" "$perm")
-    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$O365_MGMT" --api-permissions "$GUID=Role" > /dev/null
+    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$O365_MGMT" --api-permissions "$GUID=Role" --only-show-errors > /dev/null
 done
 
 log "Solicitando consentimento administrativo..."
