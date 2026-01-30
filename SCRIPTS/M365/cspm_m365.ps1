@@ -301,12 +301,14 @@ try {
     }
 
     if ($spObjectId) {
-        az role assignment create --assignee $spObjectId --role "Global Reader" --scope "/" | Out-Null
+        Write-Host "[INFO] Atribuindo papel 'Global Reader' (Entra ID)..."
+        az ad role-assignment create --assignee $spObjectId --role "Global Reader"
         if ($LASTEXITCODE -eq 0) {
-            az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
+            Write-Host "[INFO] Atribuindo papel 'Billing Reader' (Entra ID)..."
+            az ad role-assignment create --assignee $spObjectId --role "Billing Reader"
             Write-Host "[OK] Papeis atribuidos com sucesso." -ForegroundColor Green
         } else {
-            Write-Warning "Falha na atribuicao de Global Reader. Atribua manualmente se necessario."
+            Write-Warning "Falha na atribuicao de Global Reader. (Requer ser Global Admin)"
         }
     }
 }
