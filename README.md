@@ -1,27 +1,37 @@
-# Vulneri CSPM – Scripts de Integração para AWS, Azure e Microsoft 365
+# Vulneri CSPM - Setup Kit 🛡️
 
-Este repositório contém scripts de integração com os principais provedores de nuvem para habilitar a coleta de dados pela plataforma da Vulneri, incluindo:
+Este kit contém as ferramentas essenciais e automáticas para preparar sua infraestrutura de nuvem para a análise da **Vulneri**. 
 
-- Cloud Security Posture Management (CSPM)
-- FinOps (gestão de custos em nuvem)
+> [!IMPORTANT]
+> A execução destes scripts é uma **etapa obrigatória** para habilitar o monitoramento e a auditoria de segurança da plataforma Vulneri CSPM no seu ambiente.
 
+## O que este kit faz por você?
 
-## Finalidade
+### ☁️ AWS (Amazon)
+Configura o acesso necessário para que a Vulneri possa analisar as configurações de segurança da sua conta Amazon de forma rápida e segura.
 
-Estes scripts têm como objetivo facilitar a configuração das permissões necessárias para que a plataforma Vulneri possa acessar dados de segurança e consumo nos ambientes em nuvem dos clientes.
+### 🔷 Azure (Microsoft)
+Prepara a conexão com o Azure automaticamente, criando as permissões de leitura que a Vulneri precisa para realizar as auditorias.
+- Funciona perfeitamente no Windows e no Linux.
 
-## Pré-requisitos
+### 📑 Microsoft 365
+Automatiza a conexão com o seu ambiente Office/M365, guiando você pelas aprovações de administrador necessárias para a auditoria.
 
-- Permissões administrativas nas contas configuradas
-- Instalação prévia das ferramentas de linha de comando (AWS CLI, Azure CLI, PowerShell)
-- Conhecimento básico sobre execução de scripts em shell ou PowerShell
+### 🔜 Em breve
+*   **OCI (Oracle Cloud Infrastructure)**: Suporte para auditoria e postura de segurança na nuvem Oracle.
 
-## Segurança
+---
 
-Todos os scripts são auditáveis e não enviam dados sensíveis para fora do ambiente do cliente sem consentimento. É recomendável a execução em ambiente controlado e por pessoal autorizado.
+## Por que estes scripts são necessários?
+- **Pré-requisito Vulneri**: Eles garantem que todas as permissões estejam corretas para que o nosso scanner funcione 100%.
+- **Seguro e Transparente**: Configura apenas permissões de **Leitura**. A Vulneri nunca altera nada no seu ambiente.
+- **Economia de Tempo**: O que levaria muito tempo de configuração manual é resolvido em poucos segundos.
+- **Assistência Inteligente**: Se alguma etapa exigir sua aprovação, o script abre o link exato no seu navegador para facilitar.
 
-## Contato
+## Como começar
+1. Abra o seu terminal no computador (PowerShell no Windows ou Bash no Linux).
+2. Execute o script da nuvem que deseja conectar à Vulneri.
+3. Siga as orientações simples que aparecerão na tela.
 
-Dúvidas, sugestões ou problemas podem ser encaminhados para: contato@vulneri.com.br
-
-© 2025 Vulneri Segurança Digital
+---
+*Simplificando a segurança na nuvem para os clientes Vulneri.*
