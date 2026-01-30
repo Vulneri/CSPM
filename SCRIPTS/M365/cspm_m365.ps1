@@ -1,22 +1,23 @@
-<#
-.SYNOPSIS
-Script PowerShell para automatizar a criacao de aplicacao no Entra ID e configuracao de permissoes para rodar vulneri_cspm_m365 no Microsoft 365 (M365).
+#!/usr/bin/env pwsh
 
-.DESCRIPTION
-Baseado no seu script Bash, realiza:
-- Verificacao da existencia do Azure CLI
-- Login interativo (caso nao autenticado)
-- Criacao da aplicacao e client secret
-- Recuperacao e adicao das permissoes via GUIDs para Microsoft Graph, Exchange Online e Skype and Teams Tenant Admin API
-- Consentimento administrativo para todas as permissoes (quando possivel)
-- Exportacao das variaveis de ambiente para arquivo .txt para uso em shell
+# Permitir execução temporária de scripts nesta sessão
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
-.NOTES
-Requer Azure CLI instalado e suporta execucao em PowerShell no Windows/Linux.
-#>
-
-# Forca encerramento em erros
+# ----- CONFIGURACAO INICIAL -----
 $ErrorActionPreference = "Stop"
+
+$AppName       = "vulneri_azure_cspm_25"
+$EnvFile       = "vulneri_cspm_azure_env.txt"
+$GraphApiId    = "00000003-0000-0000-c000-000000000000"
+$GraphPermissions = @( 
+    "7ab1d382-f21e-4acd-a863-ba3e13f7da61",  # Directory.Read.All
+    "5d6b6bb7-de71-4623-b4af-96380a352509",  # Policy.Read.All
+    "df021288-bdef-4463-88db-98f22de89214",  # UserAuthenticationMethod.Read.All (Legacy/Extra)
+    "012133ce-4467-4f61-b44d-585ee912e95a",  # Reports.Read.All
+    "350df2c0-82a9-4621-9311-53b019199d25",  # SecurityEvents.Read.All
+    "b8964574-aaa4-4efd-ad07-062e078ea873"   # Billing.Read.All
+)
+$AzureRoles     = @("Reader", "Security Reader", "Cost Management Reader", "Billing Reader")
 
 function Test-Admin {
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -32,8 +33,14 @@ function Install-AzCli {
             Write-Host "[OK] Instalacao iniciada. Por favor, REINICIE o PowerShell apos o termino para que o comando 'az' seja reconhecido." -ForegroundColor Green
             exit 0
         } else {
-            Write-Error "Winget nao encontrado. Por favor, instale o Azure CLI manualmente em: https://aka.ms/installazurecliwindows"
-            exit 1
+            # Fallback para download direto se winget falhar
+            Write-Host "[INFO] Winget nao disponivel. Baixando instalador MSI..."
+            $msiPath = "$env:TEMP\AzureCLI.msi"
+            Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile $msiPath
+            Start-Process msiexec.exe -Wait -ArgumentList "/I $msiPath /quiet"
+            Remove-Item $msiPath
+            Write-Host "[OK] Azure CLI instalado. Reinicie o PowerShell." -ForegroundColor Green
+            exit 0
         }
     } else {
         Write-Error "Azure CLI nao encontrada. Por favor instale manualmente no seu sistema Linux."
@@ -41,310 +48,150 @@ function Install-AzCli {
     }
 }
 
-function Check-AzCli {
-    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+function Verificar-AzureCLI {
+    if (-not (Get-Command "az" -ErrorAction SilentlyContinue)) {
         Install-AzCli
     } else {
-        Write-Host "[OK] Azure CLI encontrado."
+        Write-Host "[INFO] Azure CLI encontrado."
     }
 }
 
-function Start-AzLogin {
+function Autenticar-Azure {
+    Write-Host "[INFO] Autenticando no Azure CLI..."
     try {
         az account show > $null 2>&1
-    }
-    catch {
-        Write-Host "--- Login Azure/Microsoft 365 ---"
-        Write-Host "Por favor faca login na sua conta Azure/M365."
+    } catch {
         az login --allow-no-subscriptions | Out-Null
     }
+    
+    $script:SUBSCRIPTIONS = az account list --query "[].{name:name, id:id, tenantId:tenantId}" -o json | ConvertFrom-Json
+    if ($SUBSCRIPTIONS.Count -eq 0) {
+        Write-Host "[ERRO] Nenhuma subscription encontrada."; exit 1
+    }
+    
+    # Pega o TenantId da primeira sub como referencia
+    $script:TENANT_ID = $SUBSCRIPTIONS[0].tenantId
+    Write-Host "[OK] Tenant identificado: $TENANT_ID"
+    Write-Host "[OK] Total de assinaturas mapeadas: $($SUBSCRIPTIONS.Count)"
 }
 
-function Check-M365Licensing {
-    Write-Host "[INFO] Verificando licenciamento do tenant (SKUs)..."
+function Registrar-Aplicacao {
+    $nomeApp = "$AppName_$(Get-Random -Maximum 9999)"
+    Write-Host "[INFO] Registrando aplicacao '$nomeApp'..."
+
+    $requiredResourceAccess = @(
+        @{
+            resourceAppId  = $GraphApiId
+            resourceAccess = $GraphPermissions | ForEach-Object { @{ id = $_; type = "Role" } }
+        }
+    )
+
+    $jsonPath = [System.IO.Path]::GetTempFileName()
+    $requiredResourceAccess | ConvertTo-Json -Depth 5 | Out-File -Encoding utf8 $jsonPath
+
+    $app = az ad app create `
+        --display-name $nomeApp `
+        --required-resource-accesses "@$jsonPath" `
+        --output json | ConvertFrom-Json
+
+    Remove-Item $jsonPath
+
+    if (-not $app.appId) {
+        Write-Host "[ERRO] Falha ao registrar a aplicação. Verifique se você tem permissões suficientes no Azure AD."
+        exit 1
+    }
+
+    $script:APP_ID = $app.appId
+    $script:APP_OBJECT_ID = $app.id
+    Write-Host "[INFO] Aplicacao registrada com App ID: $APP_ID"
+}
+
+function Criar-ClientSecret {
+    Write-Host "[INFO] Criando client secret..."
+    $secret = az ad app credential reset --id $APP_ID --display-name "vulneri-secret" -o json | ConvertFrom-Json
+    $script:CLIENT_SECRET = $secret.password
+    Write-Host "[INFO] Client secret criado."
+}
+
+function Atribuir-Permissoes-Graph {
+    Write-Host "[INFO] Aguardando consistencia do Azure (10s) antes do consentimento..."
+    Start-Sleep -Seconds 10
+    Write-Host "[INFO] Solicitando consentimento administrativo para Graph APIs..."
     try {
-        $skus = az rest --method get --url https://graph.microsoft.com/v1.0/subscribedSkus | ConvertFrom-Json
-        $foundSecurityLicents = $false
+        & az ad app permission admin-consent --id $APP_ID --only-show-errors > $null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Consentimento concedido via CLI." -ForegroundColor Green
+        } else {
+            throw "Consentimento falhou"
+        }
+    } catch {
+        Write-Warning "Consentimento automatico falhou (comum por politicas do tenant ou delay sincronizacao)."
+        $portalUrl = "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
+        Write-Host "[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:" -ForegroundColor Yellow
+        Write-Host $portalUrl -ForegroundColor Cyan
         
-        Write-Host "### Licencas Encontradas ###"
-        foreach ($sku in $skus.value) {
-            $skuName = $sku.skuPartNumber
-            Write-Host ("  - {0} (Total: {1}, Consumido: {2})" -f $skuName, $sku.prepaidUnits.enabled, $sku.consumedUnits)
-            
-            if ($skuName -match "AAD_PREMIUM|SPE_E3|SPE_E5|ENTERPRISEPREMIUM|AAD_PREMIUM_V2") {
-                $foundSecurityLicents = $true
+        # Tenta abrir o browser automaticamente no Windows
+        try { Start-Process $portalUrl } catch {}
+    }
+}
+
+function Criar-ServicePrincipal {
+    Write-Host "[INFO] Criando service principal para a aplicacao..."
+    $sp = az ad sp create --id $APP_ID -o json | ConvertFrom-Json
+    $script:SP_OBJECT_ID = $sp.id
+}
+
+function Atribuir-Permissoes-RBAC {
+    Write-Host "[INFO] Atribuindo papeis de seguranca e billing em TODAS as assinaturas..."
+    
+    foreach ($sub in $SUBSCRIPTIONS) {
+        Write-Host "  -> Processando assinatura: $($sub.name) ($($sub.id))" -ForegroundColor Cyan
+        foreach ($role in $AzureRoles) {
+            try {
+                az role assignment create `
+                    --assignee-object-id $SP_OBJECT_ID `
+                    --assignee-principal-type ServicePrincipal `
+                    --role $role `
+                    --scope "/subscriptions/$($sub.id)" | Out-Null
+                Write-Host "     [OK] Role '$role' atribuida." -ForegroundColor Green
+            } catch {
+                Write-Warning "     [AVISO] Falha ao atribuir '$role'. Verifique privilegios de Owner/User Access Administrator."
             }
         }
-        
-        if (-not $foundSecurityLicents) {
-            Write-Warning "[AVISO] Nenhuma licenca de seguranca avancada (P1/P2/E3/E5) detectada explicitamente."
-            Write-Warning "        Algumas auditorias (Conditional Access, Identity Protection) podem falhar ou retornar vazio."
-        } else {
-            Write-Host "[OK] Licencas de seguranca detectadas. Auditoria avancada liberada."
-        }
-    }
-    catch {
-        Write-Warning "[AVISO] Nao foi possivel verificar os SKUs. Continuando sem validacao de licenca."
     }
 }
 
-function Get-GuidForPermission {
-    param(
-        [string]$ServicePrincipalId,
-        [string]$PermissionName
-    )
-    
-    # Tenta criar o SP de forma silenciosa e segura
-    try {
-        & az ad sp show --id $ServicePrincipalId > $null 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            & az ad sp create --id $ServicePrincipalId > $null 2>&1
-        }
-    } catch { }
-
-    # Fallback Hardcoded para evitar falhas de resolucao em tenants limitados
-    $HardcodedGraph = @{
-        "AuditLog.Read.All" = "b0afded3-3588-46d8-8b3d-9842eff778da"
-        "Directory.Read.All" = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"
-        "Policy.Read.All" = "246dd0d5-5bd0-4def-940b-0421030a5b68"
-        "SharePointTenantSettings.Read.All" = "83d4163d-a2d8-4d3b-9695-4ae3ca98f888"
-        "Organization.Read.All" = "498476ce-e0fe-48b0-801-37ba7e2685c6"
-        "Domain.Read.All" = "dbb9058a-0e50-45d7-ae91-66909b5d4664"
-        "SecurityEvents.Read.All" = "bf394140-e372-4bf9-a898-299cfc7564e5"
-        "RoleManagement.Read.Directory" = "483bed4a-2ad3-4361-a73b-c83ccdbdc53c"
-        "Policy.Read.ConditionalAccess" = "37730810-e9ba-4e46-b07e-8ca78d182097"
-        "IdentityRiskEvent.Read.All" = "6e472fd1-ad78-48da-a0f0-97ab2c6b769e"
-        "Reports.Read.All" = "230claed-a721-4c5d-9cb4-a90514e508ef"
-        "Billing.Read.All" = "b8964574-aaa4-4efd-ad07-062e078ea873"
-        "SubscribedSkus.Read.All" = "f3796328-9177-4401-b687-d16ad56ed3e4"
-    }
-
-    try {
-        $spOutput = az ad sp show --id $ServicePrincipalId | ConvertFrom-Json
-        foreach($role in $spOutput.appRoles) {
-            if ($role.value -eq $PermissionName) { return $role.id }
-        }
-    } catch { }
-
-    # Fallback Hardcoded se falhar a busca dinamica
-    if ($ServicePrincipalId -eq "00000003-0000-0000-c000-000000000000") {
-        if ($HardcodedGraph.ContainsKey($PermissionName)) { return $HardcodedGraph[$PermissionName] }
-    }
-    elseif ($ServicePrincipalId -eq "00000002-0000-0ff1-ce00-000000000000") {
-        if ($PermissionName -eq "Exchange.ManageAsApp") { return "dc50a0fb-09a3-4afb-8abc-f050f4205512" }
-    }
-    elseif ($ServicePrincipalId -eq "ff74b927-94b6-45bc-9171-47fed879668d") {
-        if ($PermissionName -eq "ActivityFeed.Read") { return "c5301311-66d4-4530-90fe-431835773177" }
-        if ($PermissionName -eq "ActivityFeed.ReadDlp") { return "e1136b36-508b-49fc-9eac-62423e85934f" }
-        if ($PermissionName -eq "ServiceHealth.Read") { return "656bb153-61ce-427c-9b16-52bb664c1206" }
-    }
-
-    return $null
+function Exportar-Credenciais {
+    Write-Host "[INFO] Salvando variaveis de ambiente em '$EnvFile'..."
+    $content = @"
+export AZURE_CLIENT_ID='$APP_ID'
+export AZURE_CLIENT_SECRET='$CLIENT_SECRET'
+export AZURE_TENANT_ID='$TENANT_ID'
+"@
+    $content | Out-File -Encoding UTF8 $EnvFile
+    Write-Host ""
+    Write-Host "IMPORTANTE:"
+    Write-Host "O consentimento administrativo pode nao ter sido concedido automaticamente."
+    Write-Host "Caso necessario, conceda manualmente no portal do Entra ID:"
+    Write-Host "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    Write-Host "Localize o app, va em 'API Permissions' e clique em 'Grant admin consent'."
+    Write-Host ""
+    Write-Host "[OK] Configuracao concluida! Credenciais salvas em: $EnvFile" -ForegroundColor Green
 }
 
-Write-Host "=== Iniciando CSPM_M365: Configuracao automatizada para Vulneri_CSPM_M365 ==="
+# Execucao sequencial das funcoes
+Write-Host "=== Iniciando Azure CSPM/FinOps Setup Tools ==="
 
 $isWin = ($env:OS -match "Windows") -or ($IsWindows)
 if ($isWin -and -not (Test-Admin)) {
-    Write-Warning "!!! ATENCAO: O script nao esta rodando como Administrador !!!"
-    Write-Warning "Isso pode causar falhas ao tentar atribuir o papel de Global Reader ou instalar o Azure CLI."
-    Write-Host "Recomendamos fechar e abrir o PowerShell como Administrador."
-    Write-Host ""
+    Write-Warning "!!! ATENCAO: Corra este script como ADMINISTRADOR para evitar erros de permissao local !!!"
 }
 
-Check-AzCli
-Start-AzLogin
-Check-M365Licensing
-
-$timestamp = [int][double]::Parse((Get-Date -UFormat %s))
-$AppName = "Vulneri_CSPM_M365_$timestamp"
-$SecretName = "Vulneri_CSPM_M365Secret"
-
-Write-Host ("[INFO] Criando aplicacao Azure AD (Entra ID) com nome: {0}" -f $AppName)
-$appJson = az ad app create --display-name $AppName | ConvertFrom-Json
-
-$AppId = $appJson.appId
-$ObjectId = $appJson.id
-
-if ([string]::IsNullOrEmpty($AppId) -or $AppId -eq "null") {
-    Write-Error "[ERRO] Falha ao criar a aplicacao Azure AD."
-    exit 1
-}
-
-$TenantId = (az account show --query tenantId -o tsv)
-
-Write-Host "[INFO] Registrando segredo de cliente da aplicacao..."
-$SecretValue = az ad app credential reset --id $AppId --append --display-name $SecretName --query password -o tsv
-
-if ([string]::IsNullOrEmpty($SecretValue) -or $SecretValue -eq "null") {
-    Write-Error "[ERRO] Falha ao gerar o segredo da aplicacao."
-    exit 1
-}
-
-Write-Host "[INFO] Aguardando propagacao inicial do App (10s)..."
-Start-Sleep -Seconds 10
-
-Write-Host ""
-Write-Host "[INFO] Resolvendo GUIDs das permissoes necessarias para o vulneri_cspm_m365..."
-
-$MsGraphApi = "00000003-0000-0000-c000-000000000000"
-$ExchangeApi = "00000002-0000-0ff1-ce00-000000000000"
-$TeamsApi = "48ac35b8-9aa8-4d74-927d-1f4a14a0b239"
-
-$graphPermissions = @(
-    "AuditLog.Read.All",
-    "Directory.Read.All",
-    "Policy.Read.All",
-    "SharePointTenantSettings.Read.All",
-    "Organization.Read.All",
-    "Domain.Read.All",
-    "SecurityEvents.Read.All",
-    "RoleManagement.Read.Directory",
-    "Policy.Read.ConditionalAccess",
-    "IdentityRiskEvent.Read.All",
-    "Reports.Read.All",
-    "Billing.Read.All",
-    "SubscribedSkus.Read.All"
-)
-
-$graphPermissionGuids = @()
-foreach ($perm in $graphPermissions) {
-    $guid = Get-GuidForPermission -ServicePrincipalId $MsGraphApi -PermissionName $perm
-    if ([string]::IsNullOrEmpty($guid)) {
-        Write-Error ("[ERRO] GUID para permissao '{0}' nao encontrado no Microsoft Graph." -f $perm)
-        exit 1
-    } else {
-        Write-Host ("[OK] Permissao '{0}' (Microsoft Graph) -> GUID: {1}" -f $perm, $guid)
-        $graphPermissionGuids += $guid
-    }
-}
-
-$exchangeGuid = Get-GuidForPermission -ServicePrincipalId $ExchangeApi -PermissionName "Exchange.ManageAsApp"
-if ([string]::IsNullOrEmpty($exchangeGuid)) {
-    Write-Error "[ERRO] GUID para permissao 'Exchange.ManageAsApp' nao encontrado no Exchange Online."
-    exit 1
-} else {
-    Write-Host ("[OK] Permissao 'Exchange.ManageAsApp' (Exchange Online) -> GUID: {0}" -f $exchangeGuid)
-}
-
-$teamsGuid = Get-GuidForPermission -ServicePrincipalId $TeamsApi -PermissionName "application_access"
-if ([string]::IsNullOrEmpty($teamsGuid)) {
-    Write-Error "[ERRO] GUID para permissao 'application_access' nao encontrado no Skype and Teams Tenant Admin API."
-    exit 1
-} else {
-    Write-Host ("[OK] Permissao 'application_access' (Teams API) -> GUID: {0}" -f $teamsGuid)
-}
-
-# --- OFFICE 365 MANAGEMENT APIS ---
-$O365MgmtApi = "ff74b927-94b6-45bc-9171-47fed879668d"
-Write-Host "[INFO] Resolvendo GUIDs para Office 365 Management API..."
-$o365Permissions = @("ActivityFeed.Read", "ActivityFeed.ReadDlp", "ServiceHealth.Read")
-$o365PermissionGuids = @()
-
-foreach ($perm in $o365Permissions) {
-    $guid = Get-GuidForPermission -ServicePrincipalId $O365MgmtApi -PermissionName $perm
-    if ([string]::IsNullOrEmpty($guid)) {
-        Write-Warning ("[AVISO] GUID para permissao '{0}' nao encontrado no O365 Management API." -f $perm)
-    } else {
-        Write-Host ("[OK] Permissao '{0}' (O365 Mgmt) -> GUID: {1}" -f $perm, $guid)
-        $o365PermissionGuids += $guid
-    }
-}
-
-Write-Host ""
-Write-Host "[INFO] Adicionando permissoes a aplicacao..."
-
-foreach ($guid in $graphPermissionGuids) {
-    Write-Host ("[INFO] Adicionando permissao GUID {0} (Microsoft Graph)..." -f $guid)
-    az ad app permission add --id $AppId --api $MsGraphApi --api-permissions "$guid=Role" --only-show-errors | Out-Null
-}
-
-Write-Host ("[INFO] Adicionando permissao GUID {0} (Exchange Online)..." -f $exchangeGuid)
-az ad app permission add --id $AppId --api $ExchangeApi --api-permissions "$exchangeGuid=Role" --only-show-errors | Out-Null
-
-Write-Host ("[INFO] Adicionando permissao GUID {0} (Teams API)..." -f $teamsGuid)
-az ad app permission add --id $AppId --api $TeamsApi --api-permissions "$teamsGuid=Role" --only-show-errors | Out-Null
-
-foreach ($guid in $o365PermissionGuids) {
-    Write-Host ("[INFO] Adicionando permissao GUID {0} (O365 Management API)..." -f $guid)
-    az ad app permission add --id $AppId --api $O365MgmtApi --api-permissions "$guid=Role" --only-show-errors | Out-Null
-}
-
-Write-Host "[INFO] Tentando conceder consentimento administrativo..."
-# Silencia erro do Azure CLI no PowerShell
-$oldEAP = $ErrorActionPreference
-$ErrorActionPreference = "SilentlyContinue"
-& az ad app permission admin-consent --id $AppId 2>$null | Out-Null
-$ErrorActionPreference = $oldEAP
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "[OK] Consentimento administrativo concedido." -ForegroundColor Green
-}
-else {
-    Write-Warning "Consentimento automatico falhou (comum em tenants M365)."
-    $portalUrl = "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$AppId/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
-    Write-Host "[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:" -ForegroundColor Yellow
-    Write-Host $portalUrl -ForegroundColor Cyan
-    try { Start-Process $portalUrl } catch {}
-}
-
-Write-Host "[INFO] Configurando RBAC: Atribuindo papel de 'Global Reader' e 'Billing Reader'..."
-try {
-    az ad sp create --id $AppId | Out-Null
-    
-    $spObjectId = $null
-    for ($i = 1; $i -le 6; $i++) {
-        $spJson = az ad sp show --id $AppId | ConvertFrom-Json
-        if ($spJson.id) { $spObjectId = $spJson.id; break }
-        Write-Host "Aguardando propagacao do SP... ($i/6)"
-        Start-Sleep -Seconds 5
-    }
-
-    if ($spObjectId) {
-        Write-Host "[INFO] Atribuindo papel 'Global Reader' (Entra ID via Graph)..."
-        $BodyGlobal = '{"roleDefinitionId": "f2ef992c-3afb-46b9-b7cf-a126ee74c45a", "principalId": "' + $spObjectId + '", "directoryScopeId": "/"}'
-        & az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body $BodyGlobal --only-show-errors > $null 2>&1
-        
-        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 1) { # 1 pode ser 'Ja existe'
-            Write-Host "[INFO] Atribuindo papel 'Billing Reader' (Entra ID via Graph)..."
-            $BodyBilling = '{"roleDefinitionId": "fe930ca5-2647-49a5-9273-0453d40cc1d0", "principalId": "' + $spObjectId + '", "directoryScopeId": "/"}'
-            & az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body $BodyBilling > $null 2>&1
-            Write-Host "[OK] Papeis atribuidos com sucesso (via Graph API)." -ForegroundColor Green
-        } else {
-            Write-Warning "Falha na atribuicao de Global Reader via Graph. (Requer ser Global Admin)"
-        }
-    }
-}
-catch {
-    Write-Warning "Falha critica na etapa de RBAC. Atribua 'Global Reader' manualmente no portal."
-}
-
-Write-Host ""
-$EnvFile = "vulneri_cspm_m365_env.txt"
-Write-Host ("[INFO] Salvando variaveis de ambiente em '{0}'..." -f $EnvFile)
-
-# Conteudo no formato shell export para facil uso com source no Linux bash
-@"
-export AZURE_CLIENT_ID='$AppId'
-export AZURE_CLIENT_SECRET='$SecretValue'
-export AZURE_TENANT_ID='$TenantId'
-"@ | Set-Content -Encoding UTF8 $EnvFile
-
-Write-Host ""
-Write-Host "### Conteudo do arquivo de variaveis de ambiente ###"
-Get-Content $EnvFile | ForEach-Object { Write-Host $_ }
-
-Write-Host ""
-Write-Host "=============================================================="
-Write-Host "Processo concluido!"
-
-Write-Host ""
-Write-Host "IMPORTANTE:"
-Write-Host "O consentimento administrativo nao foi concedido automaticamente,"
-Write-Host "conceda manualmente no portal do Entra ID:"
-Write-Host "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-Write-Host "Localize o app, va em Manage e 'Permissoes de API' ou 'API Permissions'"
-Write-Host "e clique 'Conceder consentimento do administrador para <tenant>' ou 'Grant admin consent for <tenant>'."
-Write-Host ""
-Write-Host "Variaveis de ambiente criadas no arquivo vulneri_cspm_m365_env.txt"
-Write-Host "=============================================================="
+Verificar-AzureCLI
+Autenticar-Azure
+Registrar-Aplicacao
+Criar-ClientSecret
+Atribuir-Permissoes-Graph
+Criar-ServicePrincipal
+Atribuir-Permissoes-RBAC
+Exportar-Credenciais
