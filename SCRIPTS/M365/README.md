@@ -26,15 +26,15 @@ Escolha o script de acordo com o seu sistema operacional:
 Recomendado abrir o PowerShell como **Administrador**.
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\capm_m365.ps1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\cspm_m365.ps1
 ```
 
 ### No Linux / macOS (Bash)
 Certifique-se de dar permissão de execução ao arquivo.
 
 ```bash
-chmod +x capm_m365.sh
-./capm_m365.sh
+chmod +x cspm_m365.sh
+./cspm_m365.sh
 ```
 
 ---
