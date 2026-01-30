@@ -93,12 +93,40 @@ function Get-GuidForPermission {
         [string]$ServicePrincipalId,
         [string]$PermissionName
     )
-    $sp = az ad sp show --id $ServicePrincipalId | ConvertFrom-Json
-    foreach($role in $sp.appRoles) {
-        if ($role.value -eq $PermissionName) {
-            return $role.id
-        }
+    
+    # Fallback Hardcoded para evitar falhas de resolucao em tenants limitados
+    $HardcodedGraph = @{
+        "AuditLog.Read.All" = "b0afded3-3588-46d8-8b3d-9842eff778da"
+        "Directory.Read.All" = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"
+        "Policy.Read.All" = "246dd0d5-5bd0-4def-940b-0421030a5b68"
+        "SharePointTenantSettings.Read.All" = "83d4163d-a2d8-4d3b-9695-4ae3ca98f888"
+        "Organization.Read.All" = "498476ce-e0fe-48b0-801-37ba7e2685c6"
+        "Domain.Read.All" = "dbb9058a-0e50-45d7-ae91-66909b5d4664"
+        "SecurityEvents.Read.All" = "bf394140-e372-4bf9-a898-299cfc7564e5"
+        "RoleManagement.Read.Directory" = "483bed4a-2ad3-4361-a73b-c83ccdbdc53c"
+        "Policy.Read.ConditionalAccess" = "37730810-e9ba-4e46-b07e-8ca78d182097"
+        "IdentityRiskEvent.Read.All" = "6e472fd1-ad78-48da-a0f0-97ab2c6b769e"
+        "Reports.Read.All" = "230claed-a721-4c5d-9cb4-a90514e508ef"
+        "Billing.Read.All" = "b8964574-aaa4-4efd-ad07-062e078ea873"
+        "SubscribedSkus.Read.All" = "f3796328-9177-4401-b687-d16ad56ed3e4"
     }
+
+    try {
+        $sp = az ad sp show --id $ServicePrincipalId | ConvertFrom-Json
+        foreach($role in $sp.appRoles) {
+            if ($role.value -eq $PermissionName) {
+                return $role.id
+            }
+        }
+    } catch {
+        # Ignora erro de busca dinâmica para tentar o fallback
+    }
+
+    # Se nao encontrou dinamicamente ou deu erro, usa o hardcoded se existir
+    if ($ServicePrincipalId -eq "00000003-0000-0000-c000-000000000000" -and $HardcodedGraph.ContainsKey($PermissionName)) {
+        return $HardcodedGraph[$PermissionName]
+    }
+
     return $null
 }
 
@@ -131,16 +159,18 @@ if ([string]::IsNullOrEmpty($AppId) -or $AppId -eq "null") {
     exit 1
 }
 
-$TenantId = (az account show | ConvertFrom-Json).tenantId
+$TenantId = (az account show --query tenantId -o tsv)
 
 Write-Host "[INFO] Registrando segredo de cliente da aplicacao..."
-$secretJson = az ad app credential reset --id $AppId --append --display-name $SecretName | ConvertFrom-Json
-$SecretValue = $secretJson.password
+$SecretValue = az ad app credential reset --id $AppId --append --display-name $SecretName --query password -o tsv
 
 if ([string]::IsNullOrEmpty($SecretValue) -or $SecretValue -eq "null") {
     Write-Error "[ERRO] Falha ao gerar o segredo da aplicacao."
     exit 1
 }
+
+Write-Host "[INFO] Aguardando propagacao inicial do App (10s)..."
+Start-Sleep -Seconds 10
 
 Write-Host ""
 Write-Host "[INFO] Resolvendo GUIDs das permissoes necessarias para o vulneri_cspm_m365..."
@@ -228,26 +258,40 @@ foreach ($guid in $o365PermissionGuids) {
     az ad app permission add --id $AppId --api $O365MgmtApi --api-permissions "$guid=Role" | Out-Null
 }
 
-Write-Host "[INFO] Tentando conceder consentimento administrativo para todas as permissoes..."
-try {
-    az ad app permission admin-consent --id $AppId | Out-Null
-    Write-Host "[OK] Consentimento administrativo concedido com sucesso para todas as permissoes."
+Write-Host "[INFO] Tentando conceder consentimento administrativo..."
+# Silencia tanto o output normal quanto o erro do comando az
+az ad app permission admin-consent --id $AppId > $null 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[OK] Consentimento administrativo concedido." -ForegroundColor Green
 }
-catch {
-    Write-Warning "[AVISO] Consentimento administrativo NAO pode ser concedido automaticamente."
+else {
+    Write-Warning "Consentimento automatico falhou (comum em tenants M365)."
+    $portalUrl = "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$AppId/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
+    Write-Host "[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:" -ForegroundColor Yellow
+    Write-Host $portalUrl -ForegroundColor Cyan
+    try { Start-Process $portalUrl } catch {}
 }
 
-Write-Host "[INFO] Configurando RBAC: Atribuindo papel de 'Global Reader' a aplicacao..."
+Write-Host "[INFO] Configurando RBAC: Atribuindo papel de 'Global Reader' e 'Billing Reader'..."
 try {
-    # Garante que o Service Principal existe antes da atribuicao
     az ad sp create --id $AppId | Out-Null
-    $spObjectId = (az ad sp show --id $AppId | ConvertFrom-Json).id
-    az role assignment create --assignee $spObjectId --role "Global Reader" --scope "/" | Out-Null
-    az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
-    Write-Host "[OK] Papeis 'Global Reader' e 'Billing Reader' atribuidos com sucesso."
+    
+    $spObjectId = $null
+    for ($i = 1; $i -le 6; $i++) {
+        $spJson = az ad sp show --id $AppId | ConvertFrom-Json
+        if ($spJson.id) { $spObjectId = $spJson.id; break }
+        Write-Host "Aguardando propagacao do SP... ($i/6)"
+        Start-Sleep -Seconds 5
+    }
+
+    if ($spObjectId) {
+        az role assignment create --assignee $spObjectId --role "Global Reader" --scope "/" | Out-Null
+        az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
+        Write-Host "[OK] Papeis atribuidos com sucesso." -ForegroundColor Green
+    }
 }
 catch {
-    Write-Warning "[AVISO] Falha ao atribuir papeis de Admin. Verifique se voce tem privilegios de Admin."
+    Write-Warning "Falha na atribuicao automatica de RBAC. Atribua 'Global Reader' manualmente se necessario."
 }
 
 Write-Host ""
