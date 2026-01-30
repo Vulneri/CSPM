@@ -215,11 +215,15 @@ done
 if [ -z "$SP_OBJ_ID" ]; then
     warn "Falha ao obter Object ID do Service Principal. Atribua o papel 'Global Reader' manualmente se necessário."
 else
-    log "Atribuindo papel 'Global Reader' (Entra ID)..."
-    az ad role-assignment create --assignee "$SP_OBJ_ID" --role "Global Reader" || warn "Falha na atribuicao de Global Reader. (Requer ser Global Admin)"
+    log "Atribuindo papel 'Global Reader' (Entra ID via Graph)..."
+    GLOBAL_READER_ID="f2ef992c-3afb-46b9-b7cf-a126ee74c45a"
+    BODY="{\"roleDefinitionId\": \"$GLOBAL_READER_ID\", \"principalId\": \"$SP_OBJ_ID\", \"directoryScopeId\": \"/\"}"
+    az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body "$BODY" >/dev/null 2>&1 || warn "Falha na atribuicao de Global Reader via Graph. (Requer ser Global Admin)"
     
-    log "Atribuindo papel 'Billing Reader' (Entra ID)..."
-    az ad role-assignment create --assignee "$SP_OBJ_ID" --role "Billing Reader" || warn "Falha na atribuicao de Billing Reader."
+    log "Atribuindo papel 'Billing Reader' (Entra ID via Graph)..."
+    BILLING_READER_ID="fe930ca5-2647-49a5-9273-0453d40cc1d0"
+    BODY="{\"roleDefinitionId\": \"$BILLING_READER_ID\", \"principalId\": \"$SP_OBJ_ID\", \"directoryScopeId\": \"/\"}"
+    az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body "$BODY" >/dev/null 2>&1 || warn "Falha na atribuicao de Billing Reader via Graph."
 fi
 
 # Export
