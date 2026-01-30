@@ -1,167 +1,165 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# SYNOPSIS
+#   Script para automatizar a criacao de aplicacao no Entra ID e configuracao de permissoes 
+#   para rodar vulneri_cspm_m365 no Microsoft 365 (M365).
+#
+# DESCRIPTION
+#   Realiza:
+#   - Verificacao de dependencias (az, jq)
+#   - Verificacao de licenciamento (SKUs)
+#   - Criacao da aplicacao e client secret
+#   - Adicao de permissoes (Graph, Exchange, Teams, O365 Management)
+#   - Consentimento administrativo e atribuicao de papel 'Global Reader'
+#
 
-### CSPM_M365.sh
-### Script para automatizar criação de aplicação e permissões para rodar vulneri_cspm_m365 no Microsoft 365 (M365)
-### Inclui Microsoft Graph, Exchange Online, Skype and Teams Tenant Admin API, lembrete para roles administrativas
 set -e
 
-echo "=== Iniciando CSPM_M365: Configuração automatizada para Vulneri_CSPM_M365 ==="
+# Cores para output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Funções para instalar dependências
-install_azure_cli() {
-  echo "[INFO] Azure CLI não encontrada. Instalando Azure CLI..."
-  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-  echo "[OK] Azure CLI instalada com sucesso."
+echo -e "${GREEN}=== Iniciando CSPM_M365: Configuracao automatizada (Bash) ===${NC}"
+
+# 1. Instalacao do Azure CLI (Auto)
+install_azcli() {
+    echo -e "${YELLOW}[INFO] Azure CLI nao detectada. Deseja instalar agora? (s/n)${NC}"
+    read -r response
+    if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
+        echo -e "${YELLOW}[INFO] Iniciando instalacao oficial da Microsoft...${NC}"
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        echo -e "${GREEN}[OK] Instalacao concluida. Reinicie o terminal ou rode 'exec bash' para usar o comando 'az'.${NC}"
+        exit 0
+    else
+        echo -e "${RED}[ERRO] Azure CLI eh obrigatoria para este script.${NC}"
+        exit 1
+    fi
 }
 
-install_jq() {
-  echo "[INFO] jq não encontrado. Instalando jq..."
-  sudo apt-get update
-  sudo apt-get install -y jq
-  echo "[OK] jq instalado com sucesso."
+# 2. Verificacao de dependencias
+check_dependencies() {
+    if ! command -v az &> /dev/null; then
+        install_azcli
+    fi
+    if ! command -v jq &> /dev/null; then
+        echo -e "${YELLOW}[INFO] jq nao encontrado. Tentando instalar...${NC}"
+        sudo apt update && sudo apt install -y jq
+    fi
+    echo -e "${GREEN}[OK] Dependencias verificadas.${NC}"
 }
 
-# Verificações e instalações obrigatórias
-if ! command -v az >/dev/null 2>&1; then
-  install_azure_cli
-else
-  echo "[OK] Azure CLI já instalada."
-fi
+# 2. Login
+start_login() {
+    if ! az account show > /dev/null 2>&1; then
+        echo -e "${YELLOW}--- Login Azure/Microsoft 365 ---${NC}"
+        echo "Por favor faca login na sua conta Azure/M365."
+        az login --allow-no-subscriptions > /dev/null
+    fi
+}
 
-if ! command -v jq >/dev/null 2>&1; then
-  install_jq
-else
-  echo "[OK] jq já instalado."
-fi
+# 3. Verificacao de Licenciamento
+check_licensing() {
+    echo -e "${YELLOW}[INFO] Verificando licenciamento do tenant (SKUs)...${NC}"
+    SKUS=$(az rest --method get --url https://graph.microsoft.com/v1.0/subscribedSkus 2>/dev/null || echo "")
+    
+    if [ -n "$SKUS" ]; then
+        echo "### Licencas Encontradas ###"
+        SECURITY_FOUND=false
+        # Itera via jq
+        while read -r line; do
+            echo "  - $line"
+            if [[ "$line" =~ AAD_PREMIUM|SPE_E3|SPE_E5|ENTERPRISEPREMIUM|AAD_PREMIUM_V2 ]]; then
+                SECURITY_FOUND=true
+            fi
+        done < <(echo "$SKUS" | jq -r '.value[] | "\(.skuPartNumber) (Total: \(.prepaidUnits.enabled))"')
+        
+        if [ "$SECURITY_FOUND" = false ]; then
+            echo -e "${YELLOW}[AVISO] Nenhuma licenca de seguranca avancada (P1/P2/E3/E5) detectada.${NC}"
+        else
+            echo -e "${GREEN}[OK] Licencas de seguranca detectadas.${NC}"
+        fi
+    else
+        echo -e "${YELLOW}[AVISO] Nao foi possivel validar SKUs.${NC}"
+    fi
+}
 
-echo ""
-echo "--- Login Azure/Microsoft 365 ---"
-echo "Por favor, faça login na sua conta Azure/M365."
-az account show >/dev/null 2>&1 || az login --allow-no-subscriptions
+# 4. Helper para GUIDs
+get_guid() {
+    local sp_id=$1
+    local perm_name=$2
+    az ad sp show --id "$sp_id" | jq -r ".appRoles[] | select(.value==\"$perm_name\") | .id"
+}
 
-echo ""
-APP_NAME="Vulneri_CSPM_M365_$(date +%s)"
+check_dependencies
+start_login
+check_licensing
+
+TIMESTAMP=$(date +%s)
+APP_NAME="Vulneri_CSPM_M365_$TIMESTAMP"
 SECRET_NAME="Vulneri_CSPM_M365Secret"
 
-echo "[INFO] Criando aplicação Azure AD (Entra ID) com nome: $APP_NAME"
+echo -e "${YELLOW}[INFO] Criando aplicacao Entra ID: $APP_NAME...${NC}"
 APP_JSON=$(az ad app create --display-name "$APP_NAME")
 APP_ID=$(echo "$APP_JSON" | jq -r '.appId')
-OBJECT_ID=$(echo "$APP_JSON" | jq -r '.id')
+OBJ_ID=$(echo "$APP_JSON" | jq -r '.id')
 
-if [[ -z "$APP_ID" || "$APP_ID" == "null" ]]; then
-  echo "[ERRO] Falha ao criar a aplicação Azure AD."
-  exit 1
+if [ -z "$APP_ID" ] || [ "$APP_ID" == "null" ]; then
+    echo -e "${RED}[ERRO] Falha ao criar aplicacao.${NC}"
+    exit 1
 fi
 
 TENANT_ID=$(az account show | jq -r '.tenantId')
 
-echo "[INFO] Registrando segredo de cliente da aplicação..."
-SECRET_JSON=$(az ad app credential reset --id "$APP_ID" --append --display-name "$SECRET_NAME")
-SECRET_VALUE=$(echo "$SECRET_JSON" | jq -r '.password')
+echo -e "${YELLOW}[INFO] Gerando segredo de cliente...${NC}"
+SECRET_VALUE=$(az ad app credential reset --id "$APP_ID" --append --display-name "$SECRET_NAME" | jq -r '.password')
 
-if [[ -z "$SECRET_VALUE" || "$SECRET_VALUE" == "null" ]]; then
-  echo "[ERRO] Falha ao gerar o segredo da aplicação."
-  exit 1
-fi
+# Permissoes
+echo -e "${YELLOW}[INFO] Configurando permissoes...${NC}"
+MS_GRAPH="00000003-0000-0000-c000-000000000000"
+EXCHANGE="00000002-0000-0ff1-ce00-000000000000"
+TEAMS="48ac35b8-9aa8-4d74-927d-1f4a14a0b239"
+O365_MGMT="ff74b927-94b6-45bc-9171-47fed879668d"
 
-echo ""
-echo "[INFO] Resolvendo GUIDs das permissões necessárias para o vulneri_cspm_m365..."
-
-# GUIDs das APIs
-MS_GRAPH_API="00000003-0000-0000-c000-000000000000"
-EXCHANGE_API="00000002-0000-0ff1-ce00-000000000000"
-TEAMS_API="48ac35b8-9aa8-4d74-927d-1f4a14a0b239"    # Corrigido conforme você mencionou
-
-# Permissões Microsoft Graph (Application Role)
-GRAPH_PERMISSIONS=(
-  "AuditLog.Read.All"
-  "Directory.Read.All"
-  "Policy.Read.All"
-  "SharePointTenantSettings.Read.All"
-  "Organization.Read.All"
-  "Domain.Read.All"
-)
-
-# Permissão delegada User.Read (opcional, para user authentication)
-# Não adicionamos no script pelas limitações de app-only, mas deixamos o aviso abaixo
-
-declare -a GRAPH_PERMISSION_GUIDS=()
-for PERM in "${GRAPH_PERMISSIONS[@]}"
-do
-  GUID=$(az ad sp show --id $MS_GRAPH_API | jq -r --arg val "$PERM" '.appRoles[] | select(.value==$val) | .id')
-  if [[ -z "$GUID" ]]; then
-    echo "[ERRO] GUID para permissão '$PERM' não encontrado no Microsoft Graph."
-    exit 1
-  else
-    echo "[OK] Permissão '$PERM' (Microsoft Graph) -> GUID: $GUID"
-    GRAPH_PERMISSION_GUIDS+=("$GUID")
-  fi
+# Graph
+GRAPH_PERMS=("AuditLog.Read.All" "Directory.Read.All" "Policy.Read.All" "SharePointTenantSettings.Read.All" "Organization.Read.All" "Domain.Read.All" "SecurityEvents.Read.All" "RoleManagement.Read.Directory" "Policy.Read.ConditionalAccess" "IdentityRiskEvent.Read.All" "Reports.Read.All" "Billing.Read.All" "SubscribedSkus.Read.All")
+for perm in "${GRAPH_PERMS[@]}"; do
+    GUID=$(get_guid "$MS_GRAPH" "$perm")
+    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$MS_GRAPH" --api-permissions "$GUID=Role" > /dev/null
 done
 
-# Permissão Exchange.ManageAsApp
-EXCHANGE_GUID=$(az ad sp show --id $EXCHANGE_API | jq -r '.appRoles[] | select(.value=="Exchange.ManageAsApp") | .id')
-if [[ -z "$EXCHANGE_GUID" ]]; then
-  echo "[ERRO] GUID para permissão 'Exchange.ManageAsApp' não encontrado no Exchange Online."
-  exit 1
-else
-  echo "[OK] Permissão 'Exchange.ManageAsApp' (Exchange Online) -> GUID: $EXCHANGE_GUID"
-fi
+# Exchange
+GUID=$(get_guid "$EXCHANGE" "Exchange.ManageAsApp")
+[ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$EXCHANGE" --api-permissions "$GUID=Role" > /dev/null
 
-# Permissão application_access - Skype and Teams Tenant Admin API
-TEAMS_GUID=$(az ad sp show --id $TEAMS_API | jq -r '.appRoles[] | select(.value=="application_access") | .id')
-if [[ -z "$TEAMS_GUID" ]]; then
-  echo "[ERRO] GUID para permissão 'application_access' não encontrado no Skype and Teams Tenant Admin API."
-  exit 1
-else
-  echo "[OK] Permissão 'application_access' (Teams API) -> GUID: $TEAMS_GUID"
-fi
-
-echo ""
-echo "[INFO] Adicionando permissões à aplicação..."
-
-for GUID in "${GRAPH_PERMISSION_GUIDS[@]}"
-do
-  echo "[INFO] Adicionando permissão GUID $GUID (Microsoft Graph)..."
-  az ad app permission add --id "$APP_ID" --api "$MS_GRAPH_API" --api-permissions "${GUID}=Role"
+# O365 Management
+MGMT_PERMS=("ActivityFeed.Read" "ActivityFeed.ReadDlp" "ServiceHealth.Read")
+for perm in "${MGMT_PERMS[@]}"; do
+    GUID=$(get_guid "$O365_MGMT" "$perm")
+    [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$O365_MGMT" --api-permissions "$GUID=Role" > /dev/null
 done
 
-echo "[INFO] Adicionando permissão GUID $EXCHANGE_GUID (Exchange Online)..."
-az ad app permission add --id "$APP_ID" --api "$EXCHANGE_API" --api-permissions "${EXCHANGE_GUID}=Role"
+echo -e "${YELLOW}[INFO] Solicitando consentimento administrativo...${NC}"
+az ad app permission admin-consent --id "$APP_ID" || echo -e "${YELLOW}[AVISO] Consentimento automatico falhou.${NC}"
 
-echo "[INFO] Adicionando permissão GUID $TEAMS_GUID (Teams API)..."
-az ad app permission add --id "$APP_ID" --api "$TEAMS_API" --api-permissions "${TEAMS_GUID}=Role"
+echo -e "${YELLOW}[INFO] Atribuindo papeis 'Global Reader' e 'Billing Reader' via RBAC...${NC}"
+az ad sp create --id "$APP_ID" > /dev/null 2>&1 || true
+SP_OBJ_ID=$(az ad sp show --id "$APP_ID" | jq -r '.id')
+az role assignment create --assignee "$SP_OBJ_ID" --role "Global Reader" --scope "/" > /dev/null || echo -e "${YELLOW}[AVISO] Falha na atribuicao de Global Reader.${NC}"
+az role assignment create --assignee "$SP_OBJ_ID" --role "Billing Reader" --scope "/" > /dev/null || echo -e "${YELLOW}[AVISO] Falha na atribuicao de Billing Reader.${NC}"
 
-echo "[INFO] Tentando conceder consentimento administrativo para todas as permissões..."
-if az ad app permission admin-consent --id "$APP_ID"; then
-  echo "[OK] Consentimento administrativo concedido com sucesso para todas as permissões."
-else
-  echo "[AVISO] Consentimento administrativo NÃO pôde ser concedido automaticamente."
-fi
-
-echo ""
-echo "[INFO] Salvando variáveis de ambiente em 'vulneri_cspm_m365_env.txt'..."
-
-cat > vulneri_cspm_m365_env.txt <<EOF
+# Export
+ENV_FILE="vulneri_cspm_m365_env.txt"
+cat <<EOF > "$ENV_FILE"
 export AZURE_CLIENT_ID='$APP_ID'
 export AZURE_CLIENT_SECRET='$SECRET_VALUE'
 export AZURE_TENANT_ID='$TENANT_ID'
 EOF
 
-chmod 600 vulneri_cspm_m365_env.txt
-echo "Exibe o conteudo de vulneri_cspm_m365_env.txt" 
-cat vulneri_cspm_m365_env.txt
-
-echo ""
+echo -e "${GREEN}"
 echo "=============================================================="
-echo "Processo concluído!"
-
-echo ""
-echo "IMPORTANTE:"
-echo "O consentimento administrativo não foi concedido automaticamente,"
-echo "conceda manualmente no portal do Entra ID:"
-echo "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-echo "  Localize o app, vá em Manage e 'Permissões de API' ou 'API Permissions'" 
-echo "  e clique 'Conceder consentimento do administrador para <tenant>' ou 'Grand admin consent for<tenant>'."
-echo ""
-echo "Variáveis de ambiente criadas no arquivo vulneri_cspm_m365_env.txt"
+echo "Sucesso! Arquivo gerado: $ENV_FILE"
+echo "Use 'source $ENV_FILE' antes de rodar seu scanner."
 echo "=============================================================="
+echo -e "${NC}"
