@@ -94,6 +94,14 @@ function Get-GuidForPermission {
         [string]$PermissionName
     )
     
+    # Tenta criar o SP de forma silenciosa e segura
+    try {
+        & az ad sp show --id $ServicePrincipalId > $null 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            & az ad sp create --id $ServicePrincipalId > $null 2>&1
+        }
+    } catch { }
+
     # Fallback Hardcoded para evitar falhas de resolucao em tenants limitados
     $HardcodedGraph = @{
         "AuditLog.Read.All" = "b0afded3-3588-46d8-8b3d-9842eff778da"
@@ -112,19 +120,23 @@ function Get-GuidForPermission {
     }
 
     try {
-        $sp = az ad sp show --id $ServicePrincipalId | ConvertFrom-Json
-        foreach($role in $sp.appRoles) {
-            if ($role.value -eq $PermissionName) {
-                return $role.id
-            }
+        $spOutput = az ad sp show --id $ServicePrincipalId | ConvertFrom-Json
+        foreach($role in $spOutput.appRoles) {
+            if ($role.value -eq $PermissionName) { return $role.id }
         }
-    } catch {
-        # Ignora erro de busca dinâmica para tentar o fallback
-    }
+    } catch { }
 
-    # Se nao encontrou dinamicamente ou deu erro, usa o hardcoded se existir
-    if ($ServicePrincipalId -eq "00000003-0000-0000-c000-000000000000" -and $HardcodedGraph.ContainsKey($PermissionName)) {
-        return $HardcodedGraph[$PermissionName]
+    # Fallback Hardcoded se falhar a busca dinamica
+    if ($ServicePrincipalId -eq "00000003-0000-0000-c000-000000000000") {
+        if ($HardcodedGraph.ContainsKey($PermissionName)) { return $HardcodedGraph[$PermissionName] }
+    }
+    elseif ($ServicePrincipalId -eq "00000002-0000-0ff1-ce00-000000000000") {
+        if ($PermissionName -eq "Exchange.ManageAsApp") { return "dc50a0fb-09a3-4afb-8abc-f050f4205512" }
+    }
+    elseif ($ServicePrincipalId -eq "ff74b927-94b6-45bc-9171-47fed879668d") {
+        if ($PermissionName -eq "ActivityFeed.Read") { return "c5301311-66d4-4530-90fe-431835773177" }
+        if ($PermissionName -eq "ActivityFeed.ReadDlp") { return "e1136b36-508b-49fc-9eac-62423e85934f" }
+        if ($PermissionName -eq "ServiceHealth.Read") { return "656bb153-61ce-427c-9b16-52bb664c1206" }
     }
 
     return $null
@@ -259,8 +271,12 @@ foreach ($guid in $o365PermissionGuids) {
 }
 
 Write-Host "[INFO] Tentando conceder consentimento administrativo..."
-# Silencia tanto o output normal quanto o erro do comando az
-az ad app permission admin-consent --id $AppId > $null 2>&1
+# Silencia erro do Azure CLI no PowerShell
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+& az ad app permission admin-consent --id $AppId 2>$null | Out-Null
+$ErrorActionPreference = $oldEAP
+
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[OK] Consentimento administrativo concedido." -ForegroundColor Green
 }
@@ -286,12 +302,16 @@ try {
 
     if ($spObjectId) {
         az role assignment create --assignee $spObjectId --role "Global Reader" --scope "/" | Out-Null
-        az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
-        Write-Host "[OK] Papeis atribuidos com sucesso." -ForegroundColor Green
+        if ($LASTEXITCODE -eq 0) {
+            az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
+            Write-Host "[OK] Papeis atribuidos com sucesso." -ForegroundColor Green
+        } else {
+            Write-Warning "Falha na atribuicao de Global Reader. Atribua manualmente se necessario."
+        }
     }
 }
 catch {
-    Write-Warning "Falha na atribuicao automatica de RBAC. Atribua 'Global Reader' manualmente se necessario."
+    Write-Warning "Falha critica na etapa de RBAC. Atribua 'Global Reader' manualmente no portal."
 }
 
 Write-Host ""
