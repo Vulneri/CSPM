@@ -18,10 +18,32 @@ Requer Azure CLI instalado e suporta execucao em PowerShell no Windows/Linux.
 # Forca encerramento em erros
 $ErrorActionPreference = "Stop"
 
+function Test-Admin {
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Install-AzCli {
+    $isWin = ($env:OS -match "Windows") -or ($IsWindows)
+    if ($isWin) {
+        Write-Host "[INFO] Azure CLI nao detectada. Tentando instalar via Winget..." -ForegroundColor Yellow
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget install -e --id Microsoft.AzureCLI --accept-source-agreements --accept-package-agreements
+            Write-Host "[OK] Instalacao iniciada. Por favor, REINICIE o PowerShell apos o termino para que o comando 'az' seja reconhecido." -ForegroundColor Green
+            exit 0
+        } else {
+            Write-Error "Winget nao encontrado. Por favor, instale o Azure CLI manualmente em: https://aka.ms/installazurecliwindows"
+            exit 1
+        }
+    } else {
+        Write-Error "Azure CLI nao encontrada. Por favor instale manualmente no seu sistema Linux."
+        exit 1
+    }
+}
+
 function Check-AzCli {
     if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-        Write-Error "Azure CLI nao encontrada. Por favor instale antes de prosseguir."
-        exit 1
+        Install-AzCli
     } else {
         Write-Host "[OK] Azure CLI encontrado."
     }
@@ -35,6 +57,34 @@ function Start-AzLogin {
         Write-Host "--- Login Azure/Microsoft 365 ---"
         Write-Host "Por favor faca login na sua conta Azure/M365."
         az login --allow-no-subscriptions | Out-Null
+    }
+}
+
+function Check-M365Licensing {
+    Write-Host "[INFO] Verificando licenciamento do tenant (SKUs)..."
+    try {
+        $skus = az rest --method get --url https://graph.microsoft.com/v1.0/subscribedSkus | ConvertFrom-Json
+        $foundSecurityLicents = $false
+        
+        Write-Host "### Licencas Encontradas ###"
+        foreach ($sku in $skus.value) {
+            $skuName = $sku.skuPartNumber
+            Write-Host ("  - {0} (Total: {1}, Consumido: {2})" -f $skuName, $sku.prepaidUnits.enabled, $sku.consumedUnits)
+            
+            if ($skuName -match "AAD_PREMIUM|SPE_E3|SPE_E5|ENTERPRISEPREMIUM|AAD_PREMIUM_V2") {
+                $foundSecurityLicents = $true
+            }
+        }
+        
+        if (-not $foundSecurityLicents) {
+            Write-Warning "[AVISO] Nenhuma licenca de seguranca avancada (P1/P2/E3/E5) detectada explicitamente."
+            Write-Warning "        Algumas auditorias (Conditional Access, Identity Protection) podem falhar ou retornar vazio."
+        } else {
+            Write-Host "[OK] Licencas de seguranca detectadas. Auditoria avancada liberada."
+        }
+    }
+    catch {
+        Write-Warning "[AVISO] Nao foi possivel verificar os SKUs. Continuando sem validacao de licenca."
     }
 }
 
@@ -54,8 +104,17 @@ function Get-GuidForPermission {
 
 Write-Host "=== Iniciando CSPM_M365: Configuracao automatizada para Vulneri_CSPM_M365 ==="
 
+$isWin = ($env:OS -match "Windows") -or ($IsWindows)
+if ($isWin -and -not (Test-Admin)) {
+    Write-Warning "!!! ATENCAO: O script nao esta rodando como Administrador !!!"
+    Write-Warning "Isso pode causar falhas ao tentar atribuir o papel de Global Reader ou instalar o Azure CLI."
+    Write-Host "Recomendamos fechar e abrir o PowerShell como Administrador."
+    Write-Host ""
+}
+
 Check-AzCli
 Start-AzLogin
+Check-M365Licensing
 
 $timestamp = [int][double]::Parse((Get-Date -UFormat %s))
 $AppName = "Vulneri_CSPM_M365_$timestamp"
@@ -96,7 +155,14 @@ $graphPermissions = @(
     "Policy.Read.All",
     "SharePointTenantSettings.Read.All",
     "Organization.Read.All",
-    "Domain.Read.All"
+    "Domain.Read.All",
+    "SecurityEvents.Read.All",
+    "RoleManagement.Read.Directory",
+    "Policy.Read.ConditionalAccess",
+    "IdentityRiskEvent.Read.All",
+    "Reports.Read.All",
+    "Billing.Read.All",
+    "SubscribedSkus.Read.All"
 )
 
 $graphPermissionGuids = @()
@@ -127,6 +193,22 @@ if ([string]::IsNullOrEmpty($teamsGuid)) {
     Write-Host ("[OK] Permissao 'application_access' (Teams API) -> GUID: {0}" -f $teamsGuid)
 }
 
+# --- OFFICE 365 MANAGEMENT APIS ---
+$O365MgmtApi = "ff74b927-94b6-45bc-9171-47fed879668d"
+Write-Host "[INFO] Resolvendo GUIDs para Office 365 Management API..."
+$o365Permissions = @("ActivityFeed.Read", "ActivityFeed.ReadDlp", "ServiceHealth.Read")
+$o365PermissionGuids = @()
+
+foreach ($perm in $o365Permissions) {
+    $guid = Get-GuidForPermission -ServicePrincipalId $O365MgmtApi -PermissionName $perm
+    if ([string]::IsNullOrEmpty($guid)) {
+        Write-Warning ("[AVISO] GUID para permissao '{0}' nao encontrado no O365 Management API." -f $perm)
+    } else {
+        Write-Host ("[OK] Permissao '{0}' (O365 Mgmt) -> GUID: {1}" -f $perm, $guid)
+        $o365PermissionGuids += $guid
+    }
+}
+
 Write-Host ""
 Write-Host "[INFO] Adicionando permissoes a aplicacao..."
 
@@ -141,6 +223,11 @@ az ad app permission add --id $AppId --api $ExchangeApi --api-permissions "$exch
 Write-Host ("[INFO] Adicionando permissao GUID {0} (Teams API)..." -f $teamsGuid)
 az ad app permission add --id $AppId --api $TeamsApi --api-permissions "$teamsGuid=Role" | Out-Null
 
+foreach ($guid in $o365PermissionGuids) {
+    Write-Host ("[INFO] Adicionando permissao GUID {0} (O365 Management API)..." -f $guid)
+    az ad app permission add --id $AppId --api $O365MgmtApi --api-permissions "$guid=Role" | Out-Null
+}
+
 Write-Host "[INFO] Tentando conceder consentimento administrativo para todas as permissoes..."
 try {
     az ad app permission admin-consent --id $AppId | Out-Null
@@ -148,6 +235,19 @@ try {
 }
 catch {
     Write-Warning "[AVISO] Consentimento administrativo NAO pode ser concedido automaticamente."
+}
+
+Write-Host "[INFO] Configurando RBAC: Atribuindo papel de 'Global Reader' a aplicacao..."
+try {
+    # Garante que o Service Principal existe antes da atribuicao
+    az ad sp create --id $AppId | Out-Null
+    $spObjectId = (az ad sp show --id $AppId | ConvertFrom-Json).id
+    az role assignment create --assignee $spObjectId --role "Global Reader" --scope "/" | Out-Null
+    az role assignment create --assignee $spObjectId --role "Billing Reader" --scope "/" | Out-Null
+    Write-Host "[OK] Papeis 'Global Reader' e 'Billing Reader' atribuidos com sucesso."
+}
+catch {
+    Write-Warning "[AVISO] Falha ao atribuir papeis de Admin. Verifique se voce tem privilegios de Admin."
 }
 
 Write-Host ""
