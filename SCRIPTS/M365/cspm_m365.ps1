@@ -256,18 +256,18 @@ Write-Host "[INFO] Adicionando permissoes a aplicacao..."
 
 foreach ($guid in $graphPermissionGuids) {
     Write-Host ("[INFO] Adicionando permissao GUID {0} (Microsoft Graph)..." -f $guid)
-    az ad app permission add --id $AppId --api $MsGraphApi --api-permissions "$guid=Role" | Out-Null
+    az ad app permission add --id $AppId --api $MsGraphApi --api-permissions "$guid=Role" --only-show-errors | Out-Null
 }
 
 Write-Host ("[INFO] Adicionando permissao GUID {0} (Exchange Online)..." -f $exchangeGuid)
-az ad app permission add --id $AppId --api $ExchangeApi --api-permissions "$exchangeGuid=Role" | Out-Null
+az ad app permission add --id $AppId --api $ExchangeApi --api-permissions "$exchangeGuid=Role" --only-show-errors | Out-Null
 
 Write-Host ("[INFO] Adicionando permissao GUID {0} (Teams API)..." -f $teamsGuid)
-az ad app permission add --id $AppId --api $TeamsApi --api-permissions "$teamsGuid=Role" | Out-Null
+az ad app permission add --id $AppId --api $TeamsApi --api-permissions "$teamsGuid=Role" --only-show-errors | Out-Null
 
 foreach ($guid in $o365PermissionGuids) {
     Write-Host ("[INFO] Adicionando permissao GUID {0} (O365 Management API)..." -f $guid)
-    az ad app permission add --id $AppId --api $O365MgmtApi --api-permissions "$guid=Role" | Out-Null
+    az ad app permission add --id $AppId --api $O365MgmtApi --api-permissions "$guid=Role" --only-show-errors | Out-Null
 }
 
 Write-Host "[INFO] Tentando conceder consentimento administrativo..."
@@ -301,14 +301,17 @@ try {
     }
 
     if ($spObjectId) {
-        Write-Host "[INFO] Atribuindo papel 'Global Reader' (Entra ID)..."
-        az ad role-assignment create --assignee $spObjectId --role "Global Reader"
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "[INFO] Atribuindo papel 'Billing Reader' (Entra ID)..."
-            az ad role-assignment create --assignee $spObjectId --role "Billing Reader"
-            Write-Host "[OK] Papeis atribuidos com sucesso." -ForegroundColor Green
+        Write-Host "[INFO] Atribuindo papel 'Global Reader' (Entra ID via Graph)..."
+        $BodyGlobal = '{"roleDefinitionId": "f2ef992c-3afb-46b9-b7cf-a126ee74c45a", "principalId": "' + $spObjectId + '", "directoryScopeId": "/"}'
+        & az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body $BodyGlobal --only-show-errors > $null 2>&1
+        
+        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 1) { # 1 pode ser 'Ja existe'
+            Write-Host "[INFO] Atribuindo papel 'Billing Reader' (Entra ID via Graph)..."
+            $BodyBilling = '{"roleDefinitionId": "fe930ca5-2647-49a5-9273-0453d40cc1d0", "principalId": "' + $spObjectId + '", "directoryScopeId": "/"}'
+            & az rest --method post --url "https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments" --body $BodyBilling > $null 2>&1
+            Write-Host "[OK] Papeis atribuidos com sucesso (via Graph API)." -ForegroundColor Green
         } else {
-            Write-Warning "Falha na atribuicao de Global Reader. (Requer ser Global Admin)"
+            Write-Warning "Falha na atribuicao de Global Reader via Graph. (Requer ser Global Admin)"
         }
     }
 }
