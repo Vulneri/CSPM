@@ -189,8 +189,16 @@ done
 log "Solicitando consentimento administrativo..."
 az ad app permission admin-consent --id "$APP_ID" > /dev/null 2>&1 || {
     warn "Consentimento automatico falhou (comum em tenants M365)."
+    portal_url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
     echo -e "${YELLOW}[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:${NC}"
-    echo -e "${GREEN}https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false${NC}"
+    echo -e "${GREEN}$portal_url${NC}"
+    
+    # Tenta abrir o navegador automaticamente no Linux
+    if command -v xdg-open &> /dev/null; then
+        xdg-open "$portal_url" > /dev/null 2>&1 &
+    elif command -v gio &> /dev/null; then
+        gio open "$portal_url" > /dev/null 2>&1 &
+    fi
 }
 
 echo -e "${YELLOW}[INFO] Atribuindo papeis 'Global Reader' e 'Billing Reader' via RBAC...${NC}"
@@ -205,10 +213,13 @@ for i in {1..6}; do
 done
 
 if [ -z "$SP_OBJ_ID" ]; then
-    warn "Falha ao obter Object ID do Service Principal. Pule a etapa de RBAC manual se necessario."
+    warn "Falha ao obter Object ID do Service Principal. Atribua o papel 'Global Reader' manualmente se necessário."
 else
-    az role assignment create --assignee "$SP_OBJ_ID" --role "Global Reader" --scope "/" > /dev/null 2>&1 || warn "Falha na atribuicao de Global Reader."
-    az role assignment create --assignee "$SP_OBJ_ID" --role "Billing Reader" --scope "/" > /dev/null 2>&1 || warn "Falha na atribuicao de Billing Reader."
+    log "Atribuindo papel 'Global Reader' (Entra ID)..."
+    az ad role-assignment create --assignee "$SP_OBJ_ID" --role "Global Reader" || warn "Falha na atribuicao de Global Reader. (Requer ser Global Admin)"
+    
+    log "Atribuindo papel 'Billing Reader' (Entra ID)..."
+    az ad role-assignment create --assignee "$SP_OBJ_ID" --role "Billing Reader" || warn "Falha na atribuicao de Billing Reader."
 fi
 
 # Export
@@ -221,6 +232,14 @@ EOF
 
 echo -e "${GREEN}"
 echo "=============================================================="
+echo "Processo concluido!"
+echo ""
+echo -e "${YELLOW}IMPORTANTE:${NC}"
+echo "O consentimento administrativo pode nao ter sido concedido automaticamente."
+echo "Caso necessario, conceda manualmente no portal do Entra ID:"
+echo "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+echo "Localize o app, va em 'API Permissions' e clique em 'Grant admin consent'."
+echo ""
 echo "Sucesso! Arquivo gerado: $ENV_FILE"
 echo "Use 'source $ENV_FILE' antes de rodar seu scanner."
 echo "=============================================================="
