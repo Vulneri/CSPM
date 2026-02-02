@@ -1,78 +1,55 @@
-# AWS – Integração com a Plataforma Vulneri
+# AWS Setup Tools (CSPM & FinOps)
 
-Este diretório contém os scripts para configuração da conta AWS para integração com a plataforma da Vulneri, permitindo a coleta de dados de segurança e custo.
+Este repositório contém scripts de automação para facilitar a concessão de permissões de auditoria (Segurança e Operação Financeira) no ambiente **Amazon Web Services (AWS)**.
 
-## Arquivos disponíveis
+O diferencial destes scripts é o suporte nativo ao **AWS IAM Identity Center (SSO)**, guiando o usuário passo a passo através do portal de acesso para configurar uma integração segura e profissional.
 
-- `cspm_aws.sh` – Script em shell para criação de roles e políticas IAM com permissões mínimas necessárias.
+## 🚀 O que estes scripts fazem?
 
-## Pré-requisitos
+Ao executar os scripts, os seguintes itens serão configurados automaticamente em sua conta:
 
-- AWS CLI configurado e autenticado (via `aws configure`)
-- Permissões para criação de funções e políticas IAM
+1.  **Configuração de Perfil SSO:** Orienta a coleta da Start URL e Account ID, realizando o login seguro via navegador.
+2.  **Criação de Usuário IAM Técnico:** Cria o usuário `Vulneri-RO-Key` para acesso programático.
+3.  **Atribuição da Política Unificada (Vulneri-CSPM-FinOps-Policy):**
+    *   **Inventário Completo (CSPM):** Leitura de EC2, RDS, S3, IAM, Organizations, Bedrock, Backup, etc.
+    *   **Análise Financeira (FinOps):** Acesso ao Cost Explorer (`ce:*`), Cost and Usage Reports (`cur:*`) e Budgets.
+4.  **Políticas Gerenciadas AWS:** Anexa `ReadOnlyAccess` e `SecurityAudit` para cobertura total.
+5.  **Geração de Chaves de Acesso:** Cria as chaves permanentes necessárias para a plataforma Vulneri.
 
-## Execução
+---
+
+## 💻 Como utilizar
+
+Escolha o script de acordo com o seu sistema operacional. Certifique-se de estar logado com uma conta com permissões de **Administrador**.
+
+### No Windows (PowerShell)
+Abra o PowerShell como **Administrador** para permitir a instalação automática de dependências (se necessário).
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; .\aws22.ps1
+```
+
+### No Linux / macOS (Bash)
+Certifique-se de ter o `jq` instalado e dar permissão de execução ao arquivo.
 
 ```bash
-chmod +x cspm_aws.sh
-./cspm_aws.sh
-1 - Configurar perfil AWSCLI - /usr/local/bin/aws configure sso --profile Vulneri
-SSO session name (Recommended): Vulneri
-SSO start URL [None]: https://d-9XXXXX6XX.awsapps.com/start
-SSO region [None]: us-east-1
-SSO registration scopes [sso:account:access]: sso:account:access
-Attempting to automatically open the SSO authorization page in your default browser.
-If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
- 
-https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
-Gtk-Message: 15:31:14.239: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
-Using the account ID 3XXXXXXX6542
-The only role available to you is: AdministratorAccess
-Using the role name "AdministratorAccess"
-Default client Region [None]:
-CLI default output format (json if not specified) [None]:
-To use this profile, specify the profile name using --profile, as shown:
+chmod +x aws22.sh
+./aws22.sh
+```
 
-2 - Testar - aws sts get-caller-identity --profile Vulneri
-aws sts get-caller-identity --profile Vulneri
-{
-   "UserId": "XXXXXXXXXXXXXXXXXXXXXX:email@vulneri.io",
-   "Account": "3XXXXXXX6542",
-   "Arn": "arn:aws:sts::3XXXXXXX6542:assumed-role/AWSReservedSSO_AdministratorAccess_234456678234fer7/email@vulneri.io"
-}
+---
 
-3 - Fazer login AWSCLI - /usr/local/bin/aws sso login --profile Vulneri
-Attempting to automatically open the SSO authorization page in your default browser.
-If the browser does not open or you wish to use a different device to authorize this request, open the following URL:
+## 🛡️ Segurança e Transparência
 
-https://oidc.us-east-1.amazonaws.com/authorize?response_type=code&client_id=XXXXXXXXXXXXXXXXXXXXX...........
-Gtk-Message: 15:32:16.824: Not loading module "atk-bridge": The functionality is provided by GTK natively. Please try to not load it.
-Successfully logged into Start URL: https://d-9XXXXX6XX.awsapps.com/start
+*   **Identidade Center (SSO):** O script utiliza o fluxo oficial de login da AWS, nunca solicitando ou armazenando suas senhas pessoais.
+*   **Acesso Somente Leitura:** Todas as permissões são de auditoria e leitura.
+*   **Blindagem de Dados Sensíveis:** A política customizada possui um bloco `Deny` explícito para `s3:GetObject` e `SecretsManager`, garantindo que a Vulneri **não consiga ler** o conteúdo dos seus arquivos ou segredos.
+*   **Controle Total:** O acesso é feito via um usuário IAM dedicado que pode ser desativado ou deletado por você a qualquer momento.
 
+## 📦 Saída do Script
 
+Ao final, será gerado o arquivo `vulneri_credentials.env`. Ele contém a `Access Key`, `Secret Key` e a `Região` que devem ser fornecidas para a plataforma da Vulneri.
 
-4 - Rodar o script para criar usuario e atribuir as permissoes - bash criar-usuario-vulneri.sh
-[INFO] Iniciando criacao de usuario IAM com perfil 'Vulneri'...
-[INFO] Instalando dependencias: curl, unzip, jq, python3...
-[INFO] Verificando existencia do perfil 'Vulneri' no ~/.aws/config...
-[INFO] Verificando autenticacao com perfil 'Vulneri'...
-[INFO] Autenticacao bem-sucedida.
-[INFO] Criando usuario IAM 'ReadOnly-Key-To-Vulneri'...
-{
-   "User": {
-       "Path": "/",
-       "UserName": "ReadOnly-Key-To-Vulneri",
-       "UserId": "XXXXXXXXXXXXXXXXXXXXX",
-       "Arn": "arn:aws:iam::3XXXXXXX6542:user/ReadOnly-Key-To-Vulneri",
-       "CreateDate": "2025-07-15T18:36:01+00:00"
-   }
-}
-[INFO] Usuario criado com sucesso.
-[INFO] Verificando numero de access keys...
-[INFO] Criando nova access key...
-[INFO] Access key salva no arquivo: ReadOnly-Key-To-Vulneri_accessKeys.csv
-[INFO] Anexando politica 'ReadOnlyAccess' ao usuario 'ReadOnly-Key-To-Vulneri'...
-[INFO] Anexando politica 'SecurityAudit' ao usuario 'ReadOnly-Key-To-Vulneri'...
-[INFO] Todas as politicas foram atribuidas com sucesso.
-[INFO] Script finalizado com sucesso.
-Envie o arquivo ReadOnly-Key-To-Vulneri_accessKeys.csv para security@vulneri.io
+---
+> [!IMPORTANT]
+> Para o sucesso da configuração, é necessário ter em mãos a **URL do Portal de Acesso AWS** e o **ID de 12 dígitos** da conta onde a auditoria será realizada.
