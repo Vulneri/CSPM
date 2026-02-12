@@ -25,11 +25,11 @@ log() { echo -e "${GREEN}[INFO] $1${NC}"; }
 warn() { echo -e "${YELLOW}[AVISO] $1${NC}"; }
 error_exit() { echo -e "${RED}[ERRO] $1${NC}"; exit 1; }
 
-log "=== Iniciando CSPM_M365: Configuracao automatizada (Bash) ==="
+log "=== Iniciando Setup do Vulneri para Microsoft 365 ==="
 
-# 1. Instalacao do Azure CLI (Auto)
+# 1. Instalacao do Azure CLI (Necessária para comunicação com Entra ID)
 install_azcli() {
-    echo -e "${YELLOW}[INFO] Azure CLI nao detectada. Deseja instalar agora? (s/n)${NC}"
+    echo -e "${YELLOW}[INFO] Ferramentas de conexão não detectadas. Deseja instalar agora? (s/n)${NC}"
     read -r response
     if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
         echo -e "${YELLOW}[INFO] Iniciando instalacao oficial da Microsoft...${NC}"
@@ -37,7 +37,7 @@ install_azcli() {
         echo -e "${GREEN}[OK] Instalacao concluida. Reinicie o terminal ou rode 'exec bash' para usar o comando 'az'.${NC}"
         exit 0
     else
-        echo -e "${RED}[ERRO] Azure CLI eh obrigatoria para este script.${NC}"
+        echo -e "${RED}[ERRO] A ferramenta 'az' (Azure CLI) é necessária para autenticar no Entra ID.${NC}"
         exit 1
     fi
 }
@@ -57,16 +57,26 @@ check_dependencies() {
 # 2. Login
 start_login() {
     if ! az account show > /dev/null 2>&1; then
-        echo -e "${YELLOW}--- Login Azure/Microsoft 365 ---${NC}"
-        log "Por favor faca login na sua conta Azure/M365."
+        echo -e "${YELLOW}--- Login Microsoft 365 / Entra ID ---${NC}"
+        log "Por favor faça login com uma conta Global Admin ou Security Admin do M365."
         az login --allow-no-subscriptions > /dev/null
     fi
 }
 
-# 3. Verificacao de Licenciamento
+# 3. Verificacao de Licenciamento e Tenant Type
 check_licensing() {
     echo -e "${YELLOW}[INFO] Verificando licenciamento do tenant (SKUs)...${NC}"
     SKUS=$(az rest --method get --url https://graph.microsoft.com/v1.0/subscribedSkus 2>/dev/null || echo "")
+    
+    # Detecta se e tenant M365-only
+    SUBS_COUNT=$(az account list --query "length([])" -o tsv 2>/dev/null || echo "0")
+    if [ "$SUBS_COUNT" -eq 0 ]; then
+        export IS_M365_ONLY=true
+        log "Tenant M365-only detectado (sem subscriptions Azure)."
+    else
+        export IS_M365_ONLY=false
+        log "Tenant hibrido detectado ($SUBS_COUNT subscription(s) Azure encontrada(s))."
+    fi
     
     if [ -n "$SKUS" ]; then
         echo "### Licencas Encontradas ###"
@@ -111,7 +121,7 @@ get_guid() {
                 "Directory.Read.All") echo "7ab1d382-f21e-4acd-a863-ba3e13f7da61" ;;
                 "Policy.Read.All") echo "246dd0d5-5bd0-4def-940b-0421030a5b68" ;;
                 "SharePointTenantSettings.Read.All") echo "83d4163d-a2d8-4d3b-9695-4ae3ca98f888" ;;
-                "Organization.Read.All") echo "498476ce-e0fe-48b0-801-37ba7e2685c6" ;;
+                "Organization.Read.All") echo "498476ce-e0fe-48b0-8017-37ba7e2685c6" ;;
                 "Domain.Read.All") echo "dbb9058a-0e50-45d7-ae91-66909b5d4664" ;;
                 "SecurityEvents.Read.All") echo "bf394140-e372-4bf9-a898-299cfc7564e5" ;;
                 "RoleManagement.Read.Directory") echo "483bed4a-2ad3-4361-a73b-c83ccdbdc53c" ;;
@@ -120,6 +130,7 @@ get_guid() {
                 "Reports.Read.All") echo "230claed-a721-4c5d-9cb4-a90514e508ef" ;;
                 "Billing.Read.All") echo "b8964574-aaa4-4efd-ad07-062e078ea873" ;;
                 "SubscribedSkus.Read.All") echo "f3796328-9177-4401-b687-d16ad56ed3e4" ;;
+                "Sites.Read.All") echo "204e0828-b5ca-4ad8-b9f3-f32a958e7cc4" ;;
             esac
         # Fallback para Exchange Online
         elif [ "$sp_id" == "00000002-0000-0ff1-ce00-000000000000" ]; then
@@ -169,7 +180,8 @@ TEAMS="48ac35b8-9aa8-4d74-927d-1f4a14a0b239"
 O365_MGMT="ff74b927-94b6-45bc-9171-47fed879668d"
 
 # Graph
-GRAPH_PERMS=("AuditLog.Read.All" "Directory.Read.All" "Policy.Read.All" "SharePointTenantSettings.Read.All" "Organization.Read.All" "Domain.Read.All" "SecurityEvents.Read.All" "RoleManagement.Read.Directory" "Policy.Read.ConditionalAccess" "IdentityRiskEvent.Read.All" "Reports.Read.All" "Billing.Read.All" "SubscribedSkus.Read.All")
+GRAPH_PERMS=("AuditLog.Read.All" "Directory.Read.All" "Policy.Read.All" "SharePointTenantSettings.Read.All" "Organization.Read.All" "Domain.Read.All" "SecurityEvents.Read.All" "RoleManagement.Read.Directory" "Policy.Read.ConditionalAccess" "IdentityRiskEvent.Read.All" "Reports.Read.All" "Billing.Read.All" "SubscribedSkus.Read.All" "Sites.Read.All")
+
 for perm in "${GRAPH_PERMS[@]}"; do
     GUID=$(get_guid "$MS_GRAPH" "$perm")
     [ -n "$GUID" ] && az ad app permission add --id "$APP_ID" --api "$MS_GRAPH" --api-permissions "$GUID=Role" --only-show-errors > /dev/null
@@ -188,17 +200,7 @@ done
 
 log "Solicitando consentimento administrativo..."
 az ad app permission admin-consent --id "$APP_ID" > /dev/null 2>&1 || {
-    warn "Consentimento automatico falhou (comum em tenants M365)."
-    portal_url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID/isRedirect~/true/isMSAApp~/false/showInServiceTree~/false"
-    echo -e "${YELLOW}[ACAO NECESSARIA] Clique no link abaixo e clique em 'Conceder Consentimento' para finalizar:${NC}"
-    echo -e "${GREEN}$portal_url${NC}"
-    
-    # Tenta abrir o navegador automaticamente no Linux
-    if command -v xdg-open &> /dev/null; then
-        xdg-open "$portal_url" > /dev/null 2>&1 &
-    elif command -v gio &> /dev/null; then
-        gio open "$portal_url" > /dev/null 2>&1 &
-    fi
+    warn "Consentimento automatico falhou. Sera necessario conceder manualmente ao final."
 }
 
 echo -e "${YELLOW}[INFO] Atribuindo papeis 'Global Reader' e 'Billing Reader' via RBAC...${NC}"
@@ -236,15 +238,38 @@ EOF
 
 echo -e "${GREEN}"
 echo "=============================================================="
-echo "Processo concluido!"
-echo ""
-echo -e "${YELLOW}IMPORTANTE:${NC}"
-echo "O consentimento administrativo pode nao ter sido concedido automaticamente."
-echo "Caso necessario, conceda manualmente no portal do Entra ID:"
-echo "  https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
-echo "Localize o app, va em 'API Permissions' e clique em 'Grant admin consent'."
-echo ""
-echo "Sucesso! Arquivo gerado: $ENV_FILE"
-echo "Use 'source $ENV_FILE' antes de rodar seu scanner."
+echo -e "${YELLOW}  ACAO MANUAL NECESSARIA - CONSENTIMENTO ADMINISTRATIVO${NC}"
 echo "=============================================================="
+echo ""
+echo "Para que os modulos Vulneri (CSPM/Inventory/FinOps) funcionem,"
+echo "voce DEVE conceder consentimento administrativo para TODAS as permissoes:"
+echo ""
+echo -e "${YELLOW}1.${NC} Acesse o portal do Entra ID"
+echo -e "${YELLOW}2.${NC} Va em 'API Permissions' da aplicacao criada"
+echo -e "${YELLOW}3.${NC} Clique em 'Grant admin consent for <TenantName>'"
+echo -e "${YELLOW}4.${NC} Aguarde ate ver o icone verde de check em todas as permissoes"
+echo ""
+echo -e "Link direto para API Permissions:"
+CONSENT_URL="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/$APP_ID"
+echo -e "${GREEN}$CONSENT_URL${NC}"
+echo ""
+echo "=============================================================="
+echo ""
+echo -e "${GREEN}[OK] Credenciais salvas em: $ENV_FILE${NC}"
+echo -e "${GREEN}[OK] Aplicacao ID: $APP_ID${NC}"
+echo -e "${GREEN}[OK] Use 'source $ENV_FILE' antes de rodar os modulos Vulneri${NC}"
+
+# Tenta abrir o navegador automaticamente
+echo ""
+echo -e "${YELLOW}[INFO] Tentando abrir o navegador automaticamente...${NC}"
+if command -v xdg-open &> /dev/null; then
+    xdg-open "$CONSENT_URL" > /dev/null 2>&1 &
+    echo -e "${GREEN}[OK] Navegador aberto. Por favor, conceda o consentimento.${NC}"
+elif command -v gio &> /dev/null; then
+    gio open "$CONSENT_URL" > /dev/null 2>&1 &
+    echo -e "${GREEN}[OK] Navegador aberto. Por favor, conceda o consentimento.${NC}"
+else
+    warn "Nao foi possivel abrir o navegador automaticamente. Por favor, copie o link acima manualmente."
+fi
+
 echo -e "${NC}"
