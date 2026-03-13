@@ -1,0 +1,392 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Vulneri CSPM + FinOps - Cria usuario IAM read-only com permissoes
+  de auditoria de seguranca e analise de custos. Nenhum dado sensivel
+  e acessado - apenas metadados e configuracoes.
+
+# ---------------------------------------------------------------
+# PARAMETROS
+# ---------------------------------------------------------------
+Parameters:
+  UserName:
+    Type: String
+    Default: vulneri-cspm-ro
+    Description: Nome do usuario IAM que sera criado para a Vulneri
+
+# ---------------------------------------------------------------
+# RECURSOS
+# ---------------------------------------------------------------
+Resources:
+
+  # --- USUARIO IAM ---
+  VulneriUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Ref UserName
+      Tags:
+        - Key: ManagedBy
+          Value: Vulneri
+        - Key: Purpose
+          Value: CSPM-FinOps-ReadOnly
+
+  # --- ACCESS KEY ---
+  VulneriAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref VulneriUser
+
+  # --- POLICY CUSTOMIZADA CSPM + FINOPS ---
+  VulneriCSPMPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: Vulneri-CSPM-FinOps-Policy
+      Description: Permissoes read-only para CSPM e FinOps da plataforma Vulneri
+      Users:
+        - !Ref VulneriUser
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+
+          - Sid: AllowInventoryCore
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - ec2:Describe*
+              - ec2:List*
+              - ec2:GetConsoleOutput
+              - autoscaling:Describe*
+              - autoscaling:GetPredictiveScalingForecast
+              - rds:Describe*
+              - rds:List*
+              - lambda:List*
+              - lambda:Get*
+              - s3:ListAllMyBuckets
+              - s3:GetBucketAcl
+              - s3:GetBucketPolicy
+              - s3:GetBucketPolicyStatus
+              - s3:GetBucketEncryption
+              - s3:GetBucketVersioning
+              - s3:GetBucketLogging
+              - s3:GetBucketLocation
+              - s3:GetBucketPublicAccessBlock
+              - s3:GetBucketTagging
+              - s3:GetBucketCORS
+              - s3:GetBucketWebsite
+              - s3:GetBucketReplication
+              - s3:GetBucketNotification
+              - s3:GetBucketObjectLockConfiguration
+              - s3:GetBucketRequestPayment
+              - s3:GetLifecycleConfiguration
+              - s3:GetEncryptionConfiguration
+              - s3:GetAccountPublicAccessBlock
+              - s3:ListBucket
+              - iam:List*
+              - iam:Get*
+              - iam:GenerateCredentialReport
+              - iam:GenerateServiceLastAccessedDetails
+              - iam:SimulatePrincipalPolicy
+              - ecs:List*
+              - ecs:Describe*
+              - eks:List*
+              - eks:Describe*
+              - ecr:Describe*
+              - ecr:List*
+              - ecr:GetRepositoryPolicy
+              - ecr:GetLifecyclePolicy
+              - ecr:BatchCheckLayerAvailability
+              - elasticache:Describe*
+              - elasticache:List*
+              - dynamodb:ListTables
+              - dynamodb:DescribeTable
+              - dynamodb:ListTagsOfResource
+              - dynamodb:DescribeContinuousBackups
+              - dynamodb:DescribeTimeToLive
+              - elasticfilesystem:Describe*
+              - redshift:Describe*
+              - es:Describe*
+              - es:List*
+              - es:GetCompatibleVersions
+              - backup:List*
+              - backup:Get*
+              - backup:Describe*
+              - states:ListStateMachines
+              - states:DescribeStateMachine
+              - states:ListTagsForResource
+              - acm:ListCertificates
+              - acm:DescribeCertificate
+              - acm:ListTagsForCertificate
+              - secretsmanager:ListSecrets
+              - secretsmanager:DescribeSecret
+              - secretsmanager:ListSecretVersionIds
+              - secretsmanager:GetResourcePolicy
+
+          - Sid: AllowSecurityPosture
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - guardduty:List*
+              - guardduty:Get*
+              - securityhub:List*
+              - securityhub:Get*
+              - securityhub:Describe*
+              - cloudtrail:DescribeTrails
+              - cloudtrail:GetTrailStatus
+              - cloudtrail:GetEventSelectors
+              - cloudtrail:GetInsightSelectors
+              - cloudtrail:ListTrails
+              - cloudtrail:ListTags
+              - cloudtrail:LookupEvents
+              - macie2:ListFindings
+              - macie2:GetFindings
+              - macie2:DescribeBuckets
+              - macie2:ListClassificationJobs
+              - macie2:GetClassificationJob
+              - macie2:ListMacieMemberAccounts
+              - macie2:GetMacieSession
+              - shield:DescribeAttack
+              - shield:ListAttacks
+              - shield:DescribeProtection
+              - shield:ListProtections
+              - shield:DescribeSubscription
+              - shield:GetSubscriptionState
+              - wafv2:ListWebACLs
+              - wafv2:GetWebACL
+              - wafv2:ListRuleGroups
+              - wafv2:GetRuleGroup
+              - wafv2:ListIPSets
+              - wafv2:GetIPSet
+              - wafv2:ListLoggingConfigurations
+              - wafv2:GetLoggingConfiguration
+              - wafv2:ListTagsForResource
+              - waf-regional:ListWebACLs
+              - waf-regional:GetWebACL
+              - waf-regional:ListRules
+              - waf-regional:GetRule
+              - inspector2:ListFindings
+              - inspector2:ListCoverage
+              - inspector2:GetFindingsReportStatus
+              - inspector2:ListAccountPermissions
+              - inspector2:BatchGetAccountStatus
+              - accessanalyzer:ListAnalyzers
+              - accessanalyzer:GetAnalyzer
+              - accessanalyzer:ListFindings
+              - accessanalyzer:GetFinding
+              - accessanalyzer:ListArchiveRules
+              - config:DescribeConfigurationRecorders
+              - config:DescribeConfigurationRecorderStatus
+              - config:DescribeDeliveryChannels
+              - config:DescribeConfigRules
+              - config:GetComplianceSummaryByConfigRule
+              - config:GetComplianceDetailsByConfigRule
+              - config:ListDiscoveredResources
+              - config:GetResourceConfigHistory
+              - kms:ListKeys
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:GetKeyRotationStatus
+              - kms:ListAliases
+              - kms:ListGrants
+              - kms:ListKeyPolicies
+              - kms:ListResourceTags
+
+          - Sid: AllowFinOps
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - ce:GetCostAndUsage
+              - ce:GetCostAndUsageWithResources
+              - ce:GetCostForecast
+              - ce:GetUsageForecast
+              - ce:GetReservationCoverage
+              - ce:GetReservationPurchaseRecommendation
+              - ce:GetReservationUtilization
+              - ce:GetSavingsPlansCoverage
+              - ce:GetSavingsPlansUtilization
+              - ce:GetSavingsPlansUtilizationDetails
+              - ce:GetSavingsPlansPurchaseRecommendation
+              - ce:GetRightsizingRecommendation
+              - ce:GetAnomalies
+              - ce:GetAnomalySubscriptions
+              - ce:GetAnomalyMonitors
+              - ce:ListCostAllocationTags
+              - ce:GetDimensionValues
+              - ce:GetTags
+              - budgets:ViewBudget
+              - budgets:DescribeBudgets
+              - budgets:DescribeBudgetActionsForBudget
+              - budgets:DescribeBudgetPerformanceHistory
+              - savingsplans:DescribeSavingsPlans
+              - savingsplans:DescribeSavingsPlansOfferings
+              - savingsplans:DescribeSavingsPlansOfferingRates
+              - savingsplans:DescribeSavingsPlanRates
+              - compute-optimizer:GetEC2InstanceRecommendations
+              - compute-optimizer:GetEC2RecommendationProjectedMetrics
+              - compute-optimizer:GetEBSVolumeRecommendations
+              - compute-optimizer:GetLambdaFunctionRecommendations
+              - compute-optimizer:GetAutoScalingGroupRecommendations
+              - compute-optimizer:GetRecommendationSummaries
+              - compute-optimizer:GetEnrollmentStatus
+              - pricing:GetProducts
+              - pricing:DescribeServices
+              - pricing:GetAttributeValues
+              - cur:DescribeReportDefinitions
+              - organizations:ListAccounts
+              - organizations:DescribeOrganization
+              - organizations:DescribeAccount
+              - organizations:ListTagsForResource
+
+          - Sid: AllowNetworking
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - elasticloadbalancing:Describe*
+              - globalaccelerator:ListAccelerators
+              - globalaccelerator:DescribeAccelerator
+              - globalaccelerator:ListListeners
+              - globalaccelerator:DescribeListener
+              - globalaccelerator:ListEndpointGroups
+              - globalaccelerator:DescribeEndpointGroup
+              - globalaccelerator:ListTagsForResource
+              - cloudfront:ListDistributions
+              - cloudfront:GetDistribution
+              - cloudfront:ListTagsForResource
+              - cloudfront:GetDistributionConfig
+              - route53:ListHostedZones
+              - route53:GetHostedZone
+              - route53:ListResourceRecordSets
+              - route53:ListHealthChecks
+              - route53:GetHealthCheck
+              - route53:ListTagsForResource
+              - route53:ListTagsForResources
+              - route53domains:ListDomains
+              - route53domains:GetDomainDetail
+              - directconnect:DescribeConnections
+              - directconnect:DescribeVirtualInterfaces
+              - directconnect:DescribeVirtualGateways
+              - directconnect:DescribeGateways
+              - directconnect:DescribeLags
+              - network-firewall:ListFirewalls
+              - network-firewall:DescribeFirewall
+              - network-firewall:ListRuleGroups
+              - network-firewall:DescribeRuleGroup
+
+          - Sid: AllowLogsAndTags
+            Effect: Allow
+            Resource: '*'
+            Action:
+              - cloudwatch:Describe*
+              - cloudwatch:List*
+              - cloudwatch:GetMetricData
+              - cloudwatch:GetMetricStatistics
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - logs:DescribeMetricFilters
+              - logs:DescribeSubscriptionFilters
+              - logs:ListTagsLogGroup
+              - logs:GetLogGroupFields
+              - tag:GetResources
+              - tag:GetTagKeys
+              - tag:GetTagValues
+              - resource-groups:ListGroups
+              - resource-groups:GetGroup
+              - resource-groups:ListGroupResources
+              - ssm:DescribeParameters
+              - ssm:ListDocuments
+              - ssm:DescribeDocument
+              - ssm:DescribeInstanceInformation
+              - ssm:DescribeAssociations
+              - ssm:DescribeInstancePatches
+              - ssm:ListComplianceItems
+              - ssm:ListResourceComplianceSummaries
+              - ssm:GetInventory
+              - ssm:GetInventorySchema
+              - sns:ListTopics
+              - sns:GetTopicAttributes
+              - sns:ListSubscriptions
+              - sns:ListSubscriptionsByTopic
+              - sns:ListTagsForResource
+              - sqs:ListQueues
+              - sqs:GetQueueAttributes
+              - sqs:ListQueueTags
+              - events:ListRules
+              - events:DescribeRule
+              - events:ListTargetsByRule
+              - events:ListTagsForResource
+              - health:DescribeEvents
+              - health:DescribeEventDetails
+              - health:DescribeAffectedEntities
+              - support:DescribeTrustedAdvisorChecks
+              - support:DescribeTrustedAdvisorCheckResult
+              - support:DescribeTrustedAdvisorCheckSummaries
+
+          - Sid: AllowAPIGatewayReadOnly
+            Effect: Allow
+            Action:
+              - apigateway:GET
+            Resource:
+              - arn:aws:apigateway:*::/restapis
+              - arn:aws:apigateway:*::/restapis/*
+              - arn:aws:apigateway:*::/apis
+              - arn:aws:apigateway:*::/apis/*
+              - arn:aws:apigateway:*::/domainnames
+              - arn:aws:apigateway:*::/domainnames/*
+              - arn:aws:apigateway:*::/usageplans
+              - arn:aws:apigateway:*::/usageplans/*
+
+          - Sid: DenySensitive
+            Effect: Deny
+            Resource: '*'
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:GetObjectAcl
+              - s3:GetObjectVersionAcl
+              - s3:GetObjectTorrent
+              - secretsmanager:GetSecretValue
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlaintext
+              - kms:GenerateRandom
+              - kms:ReEncryptFrom
+              - kms:ReEncryptTo
+              - ssm:GetParameter
+              - ssm:GetParameters
+              - ssm:GetParametersByPath
+              - ssm:GetParameterHistory
+
+  # --- POLÍTICAS AWS MANAGED ---
+  AttachReadOnlyAccess:
+    Type: AWS::IAM::UserToGroupAddition
+    DependsOn: VulneriUser
+    Properties:
+      GroupName: !Ref VulneriReadOnlyGroup
+      Users:
+        - !Ref VulneriUser
+
+  VulneriReadOnlyGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: Vulneri-ReadOnly-Group
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecurityAudit
+
+# ---------------------------------------------------------------
+# OUTPUTS — cliente copia e cola na Vulneri
+# ---------------------------------------------------------------
+Outputs:
+  AccessKeyId:
+    Description: Cole este valor no campo Access Key ID na Vulneri
+    Value: !Ref VulneriAccessKey
+
+  SecretAccessKey:
+    Description: Cole este valor no campo Secret Access Key na Vulneri
+    Value: !GetAtt VulneriAccessKey.SecretAccessKey
+
+  UserArn:
+    Description: ARN do usuario IAM criado
+    Value: !GetAtt VulneriUser.Arn
+
+  StackRegion:
+    Description: Regiao onde a stack foi criada
+    Value: !Ref AWS::Region
